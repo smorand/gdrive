@@ -14,6 +14,8 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/drive/v3"
+	"google.golang.org/api/driveactivity/v2"
+	"google.golang.org/api/option"
 )
 
 const (
@@ -29,40 +31,83 @@ const (
 	configDirPerm       = 0755
 	tokenFilePerm       = 0600
 
-	// Config paths
-	configDirName       = ".gdrive"
-	tokenFileName       = "token.json"
-	credentialsFileName = "credentials.json"
+	// Default config paths
+	defaultConfigDirName       = ".gdrive"
+	defaultTokenFileName       = "token.json"
+	defaultCredentialsFileName = "credentials.json"
+
+	// Environment variable names
+	envConfigDir        = "GDRIVE_CONFIG_DIR"
+	envCredentialsPath  = "GDRIVE_CREDENTIALS_PATH"
 )
 
-// GetConfigDir returns the config directory path
-func GetConfigDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return configDirName
+// Config holds the configuration paths
+type Config struct {
+	ConfigDir       string
+	CredentialsPath string
+}
+
+// NewConfig creates a new Config with priority: CLI args > env vars > defaults
+func NewConfig(cliConfigDir, cliCredentialsPath string) *Config {
+	cfg := &Config{}
+
+	// Determine config directory: CLI > Env > Default
+	if cliConfigDir != "" {
+		cfg.ConfigDir = cliConfigDir
+	} else if envDir := os.Getenv(envConfigDir); envDir != "" {
+		cfg.ConfigDir = envDir
+	} else {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			cfg.ConfigDir = defaultConfigDirName
+		} else {
+			cfg.ConfigDir = filepath.Join(home, defaultConfigDirName)
+		}
 	}
-	return filepath.Join(home, configDirName)
+
+	// Determine credentials path: CLI > Env > Default lookup
+	if cliCredentialsPath != "" {
+		cfg.CredentialsPath = cliCredentialsPath
+	} else if envCred := os.Getenv(envCredentialsPath); envCred != "" {
+		cfg.CredentialsPath = envCred
+	}
+	// If still empty, will be resolved by GetCredentialsPath
+
+	return cfg
+}
+
+// GetConfigDir returns the config directory path
+func (c *Config) GetConfigDir() string {
+	return c.ConfigDir
 }
 
 // GetTokenPath returns the token file path
-func GetTokenPath() string {
-	return filepath.Join(GetConfigDir(), tokenFileName)
+func (c *Config) GetTokenPath() string {
+	return filepath.Join(c.ConfigDir, defaultTokenFileName)
 }
 
 // GetCredentialsPath returns the credentials file path
-func GetCredentialsPath() (string, error) {
+func (c *Config) GetCredentialsPath() (string, error) {
+	// If explicitly set via CLI or env, use it
+	if c.CredentialsPath != "" {
+		if _, err := os.Stat(c.CredentialsPath); err == nil {
+			return c.CredentialsPath, nil
+		}
+		return "", fmt.Errorf("credentials file not found at %s", c.CredentialsPath)
+	}
+
 	// Try current directory first
-	if _, err := os.Stat(credentialsFileName); err == nil {
-		return credentialsFileName, nil
+	if _, err := os.Stat(defaultCredentialsFileName); err == nil {
+		return defaultCredentialsFileName, nil
 	}
 
 	// Try config directory
-	configPath := filepath.Join(GetConfigDir(), credentialsFileName)
+	configPath := filepath.Join(c.ConfigDir, defaultCredentialsFileName)
 	if _, err := os.Stat(configPath); err == nil {
 		return configPath, nil
 	}
 
-	return "", fmt.Errorf("%s not found in current directory or %s", credentialsFileName, GetConfigDir())
+	return "", fmt.Errorf("%s not found in current directory or %s", defaultCredentialsFileName, c.ConfigDir)
 }
 
 // GetTokenFromWeb requests a token from the web using a local server
@@ -187,8 +232,8 @@ func LoadToken(path string) (*oauth2.Token, error) {
 }
 
 // GetAuthenticatedService returns an authenticated Drive service
-func GetAuthenticatedService() (*drive.Service, error) {
-	credPath, err := GetCredentialsPath()
+func GetAuthenticatedService(cfg *Config) (*drive.Service, error) {
+	credPath, err := cfg.GetCredentialsPath()
 	if err != nil {
 		return nil, err
 	}
@@ -198,12 +243,12 @@ func GetAuthenticatedService() (*drive.Service, error) {
 		return nil, fmt.Errorf("unable to read credentials file: %v", err)
 	}
 
-	config, err := google.ConfigFromJSON(b, drive.DriveScope)
+	config, err := google.ConfigFromJSON(b, drive.DriveScope, driveactivity.DriveActivityReadonlyScope)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse credentials file: %v", err)
 	}
 
-	tokenPath := GetTokenPath()
+	tokenPath := cfg.GetTokenPath()
 	tok, err := LoadToken(tokenPath)
 	if err != nil {
 		// Get new token
@@ -220,6 +265,45 @@ func GetAuthenticatedService() (*drive.Service, error) {
 	srv, err := drive.New(client)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create Drive client: %v", err)
+	}
+
+	return srv, nil
+}
+
+// GetAuthenticatedActivityService returns an authenticated Drive Activity service
+func GetAuthenticatedActivityService(cfg *Config) (*driveactivity.Service, error) {
+	credPath, err := cfg.GetCredentialsPath()
+	if err != nil {
+		return nil, err
+	}
+
+	b, err := os.ReadFile(credPath)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read credentials file: %v", err)
+	}
+
+	config, err := google.ConfigFromJSON(b, drive.DriveScope, driveactivity.DriveActivityReadonlyScope)
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse credentials file: %v", err)
+	}
+
+	tokenPath := cfg.GetTokenPath()
+	tok, err := LoadToken(tokenPath)
+	if err != nil {
+		// Get new token
+		tok, err = GetTokenFromWeb(config)
+		if err != nil {
+			return nil, err
+		}
+		if err := SaveToken(tokenPath, tok); err != nil {
+			return nil, err
+		}
+	}
+
+	client := config.Client(context.Background(), tok)
+	srv, err := driveactivity.NewService(context.Background(), option.WithHTTPClient(client))
+	if err != nil {
+		return nil, fmt.Errorf("unable to create Drive Activity client: %v", err)
 	}
 
 	return srv, nil
