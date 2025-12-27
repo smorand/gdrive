@@ -25,6 +25,7 @@ var (
 	roleFlag      string
 	notifyFlag    bool
 	messageFlag   string
+	daysBackFlag  int
 )
 
 // File commands
@@ -266,6 +267,71 @@ Examples:
 	RunE: runSearch,
 }
 
+// Activity commands
+var activityCmd = &cobra.Command{
+	Use:   "activity",
+	Short: "View activity and revision history",
+	Long:  "Commands for viewing recent changes and file revision history",
+}
+
+var activityChangesCmd = &cobra.Command{
+	Use:   "changes",
+	Short: "List recent changes to files",
+	Long: `List recent changes to files in Google Drive.
+Shows additions, modifications, and removals.
+
+Examples:
+  gdrive activity changes
+  gdrive activity changes --max 20`,
+	Args: cobra.NoArgs,
+	RunE: runActivityChanges,
+}
+
+var activityRevisionsCmd = &cobra.Command{
+	Use:   "revisions FILE",
+	Short: "List revision history for a file",
+	Long: `List all revisions for a specific file.
+Shows modification time, size, and who made the change.
+
+Examples:
+  gdrive activity revisions Parameters/file.txt
+  gdrive activity revisions 1a2b3c4d5e --id`,
+	Args: cobra.ExactArgs(1),
+	RunE: runActivityRevisions,
+}
+
+var activityDeletedCmd = &cobra.Command{
+	Use:   "deleted",
+	Short: "List recently deleted files",
+	Long: `List files that have been deleted (moved to trash).
+Shows file name, deletion time, size, and who deleted it.
+
+Examples:
+  gdrive activity deleted
+  gdrive activity deleted --days 7
+  gdrive activity deleted --days 30 --max 100`,
+	Args: cobra.NoArgs,
+	RunE: runActivityDeleted,
+}
+
+var activityHistoryCmd = &cobra.Command{
+	Use:   "history",
+	Short: "List detailed activity history",
+	Long: `List detailed activity history using Drive Activity API.
+Shows all activities including permanent deletions, edits, moves, and permission changes.
+
+Note: The API may have limits on historical data retention.
+For very large result sets, increase --max (e.g., --max 1000).
+
+Examples:
+  gdrive activity history
+  gdrive activity history --days 14
+  gdrive activity history --days 30 --max 500
+  gdrive activity history --days 7 --max 1000`,
+	Args: cobra.NoArgs,
+	RunE: runActivityHistory,
+}
+
 func init() {
 	// File commands
 	fileCmd.AddCommand(fileDownloadCmd)
@@ -315,10 +381,22 @@ func init() {
 	// Search command
 	searchCmd.Flags().Int64VarP(&maxResults, "max", "m", 50, "Maximum number of results")
 	searchCmd.Flags().StringVarP(&fileTypeFlag, "type", "t", "", "Filter by file types (comma-separated)")
+
+	// Activity commands
+	activityCmd.AddCommand(activityChangesCmd)
+	activityCmd.AddCommand(activityRevisionsCmd)
+	activityCmd.AddCommand(activityDeletedCmd)
+	activityCmd.AddCommand(activityHistoryCmd)
+	activityChangesCmd.Flags().Int64VarP(&maxResults, "max", "m", 50, "Maximum number of changes to show")
+	activityRevisionsCmd.Flags().BoolVar(&useIDFlag, "id", false, "Treat FILE as a Drive file ID")
+	activityDeletedCmd.Flags().IntVar(&daysBackFlag, "days", 7, "Number of days back to search for deleted files")
+	activityDeletedCmd.Flags().Int64VarP(&maxResults, "max", "m", 100, "Maximum number of deleted files to show")
+	activityHistoryCmd.Flags().IntVar(&daysBackFlag, "days", 7, "Number of days back to show activity history")
+	activityHistoryCmd.Flags().Int64VarP(&maxResults, "max", "m", 100, "Maximum number of activities to show")
 }
 
 func getDriveService() (*DriveService, error) {
-	srv, err := GetAuthenticatedService()
+	srv, err := GetAuthenticatedService(globalConfig)
 	if err != nil {
 		return nil, fmt.Errorf("authentication error: %v", err)
 	}
@@ -1433,5 +1511,289 @@ func runFileRemovePublic(cmd *cobra.Command, args []string) error {
 	}
 
 	color.Green("✓ Public access removed successfully")
+	return nil
+}
+
+func runActivityChanges(cmd *cobra.Command, args []string) error {
+	ds, err := getDriveService()
+	if err != nil {
+		return err
+	}
+
+	// Get changes
+	changes, err := ds.ListChanges(maxResults)
+	if err != nil {
+		return err
+	}
+
+	if len(changes) == 0 {
+		fmt.Println("No recent changes found")
+		return nil
+	}
+
+	// Display header
+	color.Cyan("\nRecent Changes:")
+	fmt.Printf("%-15s %-40s %-30s %-15s\n", "Type", "File Name", "Modified By", "Time")
+	fmt.Println(strings.Repeat("-", 100))
+
+	// Display changes
+	for _, change := range changes {
+		changeType := change.ChangeType
+		if change.Removed {
+			changeType = color.RedString("Removed")
+		} else if change.ChangeType == "Modified" {
+			changeType = color.YellowString("Modified")
+		} else {
+			changeType = color.GreenString("Added")
+		}
+
+		fileName := change.FileName
+		if fileName == "" {
+			fileName = color.New(color.Faint).Sprint("<unnamed>")
+		}
+		if len(fileName) > 40 {
+			fileName = fileName[:37] + "..."
+		}
+
+		modifiedBy := change.ModifiedBy
+		if modifiedBy == "" {
+			modifiedBy = color.New(color.Faint).Sprint("<unknown>")
+		}
+		if len(modifiedBy) > 30 {
+			modifiedBy = modifiedBy[:27] + "..."
+		}
+
+		timeStr := change.ChangeTime.Format("2006-01-02 15:04")
+
+		fmt.Printf("%-15s %-40s %-30s %-15s\n", changeType, fileName, modifiedBy, timeStr)
+	}
+
+	fmt.Printf("\nTotal: %d changes\n", len(changes))
+	return nil
+}
+
+func runActivityRevisions(cmd *cobra.Command, args []string) error {
+	ds, err := getDriveService()
+	if err != nil {
+		return err
+	}
+
+	filePath := args[0]
+	var fileID string
+
+	if useIDFlag {
+		fileID = filePath
+	} else {
+		// Parse path to get folder and filename
+		dir := filepath.Dir(filePath)
+		filename := filepath.Base(filePath)
+
+		parentID, err := ds.ResolvePath(dir, true)
+		if err != nil {
+			return fmt.Errorf("parent folder not found: %v", err)
+		}
+
+		file, err := ds.FindFile(filename, parentID)
+		if err != nil {
+			return err
+		}
+		if file == nil {
+			return fmt.Errorf("file not found: %s", filePath)
+		}
+		fileID = file.Id
+	}
+
+	// Get file info
+	fileInfo, err := ds.GetFileInfo(fileID)
+	if err != nil {
+		return fmt.Errorf("unable to get file info: %v", err)
+	}
+
+	// Get revisions
+	revisions, err := ds.ListRevisions(fileID)
+	if err != nil {
+		return err
+	}
+
+	if len(revisions) == 0 {
+		fmt.Println("No revisions found for this file")
+		return nil
+	}
+
+	// Display file info
+	color.Cyan("\nRevision History for: %s", fileInfo.Name)
+	fmt.Printf("File ID: %s\n", fileID)
+	fmt.Printf("Path: %s\n\n", fileInfo.Path)
+
+	// Display header
+	fmt.Printf("%-15s %-25s %-15s %-30s %-10s\n", "Revision ID", "Modified Time", "Size", "Modified By", "Keep")
+	fmt.Println(strings.Repeat("-", 100))
+
+	// Display revisions (reverse order - newest first)
+	for i := len(revisions) - 1; i >= 0; i-- {
+		rev := revisions[i]
+
+		revID := rev.ID
+		if len(revID) > 15 {
+			revID = revID[:12] + "..."
+		}
+
+		modifiedTime := rev.ModifiedTime.Format("2006-01-02 15:04:05")
+
+		sizeStr := formatSize(rev.Size)
+
+		modifiedBy := rev.ModifiedBy
+		if modifiedBy == "" {
+			modifiedBy = color.New(color.Faint).Sprint("<unknown>")
+		}
+		if len(modifiedBy) > 30 {
+			modifiedBy = modifiedBy[:27] + "..."
+		}
+
+		keepStr := ""
+		if rev.KeepForever {
+			keepStr = color.GreenString("Yes")
+		}
+
+		fmt.Printf("%-15s %-25s %-15s %-30s %-10s\n", revID, modifiedTime, sizeStr, modifiedBy, keepStr)
+	}
+
+	fmt.Printf("\nTotal: %d revisions\n", len(revisions))
+	if len(revisions) >= 100 {
+		color.Yellow("\nNote: For frequently edited files, older revisions might be omitted from the list.")
+	}
+	return nil
+}
+
+func runActivityDeleted(cmd *cobra.Command, args []string) error {
+	ds, err := getDriveService()
+	if err != nil {
+		return err
+	}
+
+	// Get deleted files
+	files, err := ds.ListTrashedFiles(daysBackFlag, maxResults)
+	if err != nil {
+		return err
+	}
+
+	if len(files) == 0 {
+		fmt.Printf("No deleted files found in the last %d days\n", daysBackFlag)
+		return nil
+	}
+
+	// Display header
+	color.Cyan("\nDeleted Files (Last %d days):", daysBackFlag)
+	fmt.Printf("%-40s %-25s %-15s %-30s\n", "File Name", "Deleted Time", "Size", "Deleted By")
+	fmt.Println(strings.Repeat("-", 110))
+
+	// Display deleted files
+	for _, file := range files {
+		fileName := file.Name
+		if fileName == "" {
+			fileName = color.New(color.Faint).Sprint("<unnamed>")
+		}
+		if len(fileName) > 40 {
+			fileName = fileName[:37] + "..."
+		}
+
+		deletedTime := ""
+		if file.TrashedTime != "" {
+			if t, err := time.Parse(time.RFC3339, file.TrashedTime); err == nil {
+				deletedTime = t.Format("2006-01-02 15:04:05")
+			}
+		}
+
+		sizeStr := formatSize(file.Size)
+
+		deletedBy := ""
+		if file.TrashingUser != nil {
+			deletedBy = file.TrashingUser.DisplayName
+			if deletedBy == "" {
+				deletedBy = file.TrashingUser.EmailAddress
+			}
+		}
+		if deletedBy == "" {
+			deletedBy = color.New(color.Faint).Sprint("<unknown>")
+		}
+		if len(deletedBy) > 30 {
+			deletedBy = deletedBy[:27] + "..."
+		}
+
+		fmt.Printf("%-40s %-25s %-15s %-30s\n", fileName, deletedTime, sizeStr, deletedBy)
+	}
+
+	fmt.Printf("\nTotal: %d deleted files\n", len(files))
+	return nil
+}
+
+func runActivityHistory(cmd *cobra.Command, args []string) error {
+	// Get Activity service
+	activityService, err := GetAuthenticatedActivityService(globalConfig)
+	if err != nil {
+		return err
+	}
+
+	// Query activities
+	activities, err := QueryDriveActivity(activityService, daysBackFlag, maxResults)
+	if err != nil {
+		return err
+	}
+
+	if len(activities) == 0 {
+		fmt.Printf("No activities found in the last %d days\n", daysBackFlag)
+		return nil
+	}
+
+	// Display header
+	color.Cyan("\nActivity History (Last %d days):", daysBackFlag)
+	fmt.Printf("%-20s %-15s %-30s %-40s %-30s\n", "Time", "Action", "Detail", "File/Item", "Actor")
+	fmt.Println(strings.Repeat("-", 135))
+
+	// Display activities
+	for _, activity := range activities {
+		timestamp := activity.Timestamp.Format("2006-01-02 15:04:05")
+
+		actionType := activity.ActionType
+		// Color code based on action type
+		switch activity.ActionType {
+		case "Delete":
+			actionType = color.RedString(activity.ActionType)
+		case "Create", "Upload":
+			actionType = color.GreenString(activity.ActionType)
+		case "Edit":
+			actionType = color.YellowString(activity.ActionType)
+		case "Permission":
+			actionType = color.CyanString(activity.ActionType)
+		}
+
+		actionDetail := activity.ActionDetail
+		if len(actionDetail) > 30 {
+			actionDetail = actionDetail[:27] + "..."
+		}
+
+		targetTitle := "<no target>"
+		if len(activity.TargetTitles) > 0 {
+			targetTitle = activity.TargetTitles[0]
+		}
+		if len(targetTitle) > 40 {
+			targetTitle = targetTitle[:37] + "..."
+		}
+
+		actor := "<unknown>"
+		if len(activity.Actors) > 0 {
+			actor = activity.Actors[0]
+		}
+		if len(actor) > 30 {
+			actor = actor[:27] + "..."
+		}
+
+		fmt.Printf("%-20s %-15s %-30s %-40s %-30s\n", timestamp, actionType, actionDetail, targetTitle, actor)
+	}
+
+	fmt.Printf("\nTotal: %d activities\n", len(activities))
+	color.Yellow("\n⚠  Note: Google Drive API doesn't retain file names for permanently deleted files.")
+	color.Yellow("   File names show as <ID: ...> for permanent deletions.")
+	color.Yellow("   Use 'gdrive activity deleted' to see files still in trash with their names.")
 	return nil
 }

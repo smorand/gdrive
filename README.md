@@ -16,6 +16,7 @@ A command-line tool for syncing files and folders with Google Drive, built in Go
 - ⏱️ **Timestamp Preservation**: Maintains original modification times
 - 🔐 **Permissions Management**: Share files, manage permissions, control access
 - 📦 **Google Workspace Export**: Automatic export to standard formats (PDF, DOCX, XLSX, PPTX)
+- 📜 **Activity Tracking**: View recent changes and file revision history
 
 ## Installation
 
@@ -47,6 +48,34 @@ sudo mv gdrive /usr/local/bin/
    - `~/.gdrive/credentials.json`
 
 On first run, you'll authenticate via browser and credentials will be saved to `~/.gdrive/token.json`.
+
+## Configuration
+
+### Config Directory and Credentials
+
+You can customize where `gdrive` looks for configuration files using three methods (in priority order):
+
+1. **Command-line flags** (highest priority):
+   ```bash
+   gdrive --config-dir /custom/path --credentials /path/to/credentials.json file list Documents
+   ```
+
+2. **Environment variables**:
+   ```bash
+   export GDRIVE_CONFIG_DIR="/custom/path"
+   export GDRIVE_CREDENTIALS_PATH="/path/to/credentials.json"
+   gdrive file list Documents
+   ```
+
+3. **Default values** (lowest priority):
+   - Config directory: `$HOME/.gdrive`
+   - Credentials: `./credentials.json` or `$HOME/.gdrive/credentials.json`
+
+**Global Flags:**
+- `--config-dir` - Directory for storing token.json (env: `GDRIVE_CONFIG_DIR`)
+- `--credentials` - Path to credentials.json file (env: `GDRIVE_CREDENTIALS_PATH`)
+
+These flags work with all commands and allow you to manage multiple Google accounts or use custom paths.
 
 ## Usage
 
@@ -170,6 +199,34 @@ gdrive folder list Documents
 gdrive folder list 1a2b3c4d5e --id
 ```
 
+### Activity & Revision History
+
+**View recent changes:**
+```bash
+gdrive activity changes
+gdrive activity changes --max 20
+```
+
+**View deleted files:**
+```bash
+gdrive activity deleted                    # Last 7 days (default)
+gdrive activity deleted --days 14          # Last 14 days
+gdrive activity deleted --days 30 --max 50 # Last 30 days, max 50 results
+```
+
+**View comprehensive activity history (includes permanent deletions):**
+```bash
+gdrive activity history                    # Last 7 days (default)
+gdrive activity history --days 14          # Last 14 days
+gdrive activity history --days 30 --max 200 # Last 30 days
+```
+
+**View file revision history:**
+```bash
+gdrive activity revisions Parameters/file.txt
+gdrive activity revisions 1a2b3c4d5e --id
+```
+
 ### Search
 
 **Basic search:**
@@ -260,6 +317,23 @@ You can also use explicit MIME types like `image/jpeg` or `application/pdf`.
 
 - `gdrive folder list REMOTE_FOLDER` - List folder contents
   - `--id` - Treat REMOTE_FOLDER as a Drive folder ID
+
+### Activity Commands
+
+- `gdrive activity changes` - List recent changes to files
+  - `--max, -m` - Maximum number of changes to show (default: 50)
+
+- `gdrive activity deleted` - List recently deleted files (in trash)
+  - `--days` - Number of days back to search (default: 7)
+  - `--max, -m` - Maximum number of deleted files to show (default: 100)
+
+- `gdrive activity history` - List comprehensive activity history (Drive Activity API)
+  - Includes permanent deletions, edits, moves, permission changes, and more
+  - `--days` - Number of days back to show (default: 7)
+  - `--max, -m` - Maximum number of activities to show (default: 100)
+
+- `gdrive activity revisions FILE` - List revision history for a file
+  - `--id` - Treat FILE as a Drive file ID
 
 ### Search Command
 

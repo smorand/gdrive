@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-A high-performance command-line tool for Google Drive operations, built in Go. Provides comprehensive file and folder management with parallel downloads, progress tracking, and smart path resolution.
+A high-performance command-line tool for Google Drive operations, built in Go. Provides comprehensive file and folder management with parallel downloads, progress tracking, smart path resolution, and flexible configuration management.
 
 ## Architecture
 
@@ -10,9 +10,13 @@ A high-performance command-line tool for Google Drive operations, built in Go. P
 
 1. **auth.go** - Authentication module
    - Handles OAuth2 flow with Google Drive API
-   - Manages credential storage in `~/.gdrive/`
+   - Manages credential storage with configurable paths
+   - Configuration priority: CLI flags > Environment variables > Defaults
    - Uses JSON for token persistence
    - Local HTTP server for OAuth callback (port 8080)
+   - `Config` struct: Holds configurable paths for credentials and config directory
+   - `NewConfig()`: Creates Config with priority resolution
+   - Environment variables: `GDRIVE_CONFIG_DIR`, `GDRIVE_CREDENTIALS_PATH`
 
 2. **drive_service.go** - Drive operations service
    - `DriveService` struct encapsulates all Drive API interactions
@@ -21,19 +25,40 @@ A high-performance command-line tool for Google Drive operations, built in Go. P
    - Folder operations: recursive traversal and sync
    - List and search operations: query Drive API for file metadata
    - Comprehensive MIME type mappings for all common file types
+   - Activity tracking: changes list and file revision history
+   - `ChangeInfo` and `RevisionInfo` structs for activity data
 
 3. **cli.go** - Command-line interface
    - Built with Cobra framework for robust CLI
-   - Three command groups: `file`, `folder`, and `search`
+   - Four command groups: `file`, `folder`, `search`, and `activity`
    - fatih/color library for colored terminal output
    - progressbar/v3 library for real-time progress tracking
    - Helper functions for formatting and display
 
 4. **main.go** - Main entry point
    - Sets up Cobra command structure
+   - Defines global flags: `--config-dir`, `--credentials`
+   - Initializes global Config instance via `PersistentPreRun`
    - Delegates to CLI handlers
 
 ### Key Design Patterns
+
+#### Configuration Management
+- **Priority System**: CLI flags > Environment variables > Default values
+- **Config Structure**:
+  - `Config` struct holds `ConfigDir` and `CredentialsPath`
+  - `NewConfig(cliConfigDir, cliCredentialsPath)` resolves configuration
+  - Methods: `GetConfigDir()`, `GetTokenPath()`, `GetCredentialsPath()`
+- **Global State**:
+  - `globalConfig` variable initialized in `PersistentPreRun` hook
+  - Available to all commands via `getDriveService()`
+- **Environment Variables**:
+  - `GDRIVE_CONFIG_DIR`: Override config directory (default: `~/.gdrive`)
+  - `GDRIVE_CREDENTIALS_PATH`: Override credentials file path
+- **Default Behavior**:
+  - Config directory: `$HOME/.gdrive`
+  - Credentials lookup: Current directory → Config directory
+  - Token storage: `{ConfigDir}/token.json`
 
 #### Path Resolution
 - Human-friendly paths like `Parameters/bin` are resolved to Drive folder IDs
@@ -63,14 +88,26 @@ A high-performance command-line tool for Google Drive operations, built in Go. P
 
 ## Implementation Details
 
+### Configuration Resolution Flow
+
+```
+1. Parse CLI flags (--config-dir, --credentials)
+2. Check environment variables (GDRIVE_CONFIG_DIR, GDRIVE_CREDENTIALS_PATH)
+3. Fall back to defaults (~/.gdrive, ./credentials.json)
+4. Create Config struct with resolved paths
+5. Store in globalConfig variable (available to all commands)
+```
+
 ### Authentication Flow
 
 ```
-1. Check for existing token at ~/.gdrive/token.json
-2. If valid, use it
-3. If expired, OAuth2 client handles refresh automatically
-4. If none, start OAuth2 flow
-5. Save new token for future use
+1. Resolve config paths using NewConfig()
+2. Look for credentials.json using GetCredentialsPath()
+3. Check for existing token at Config.GetTokenPath()
+4. If valid, use it
+5. If expired, OAuth2 client handles refresh automatically
+6. If none, start OAuth2 flow
+7. Save new token to Config.GetTokenPath()
 ```
 
 ### File Upload Logic
@@ -169,6 +206,41 @@ A high-performance command-line tool for Google Drive operations, built in Go. P
 4. CopyFile: Create duplicate with optional new name/location
 5. GetFilePath: Traverse parent folders to reconstruct full path
 6. GetFileInfo: Complete metadata including owners, dates, path
+```
+
+### Activity Tracking
+
+```
+1. ListChanges: Get recent changes to files in Drive
+   - Uses Changes.GetStartPageToken() for current state
+   - Returns ChangeInfo with file name, type, modified by, time
+   - Change types: Added, Modified, Removed (color-coded in display)
+   - Configurable page size (default: 50)
+
+2. ListTrashedFiles: Get recently deleted files (in trash)
+   - Query: "trashed = true" with optional time filter
+   - Filters by trashedTime >= cutoff date
+   - Returns file name, deletion time, size, and who deleted it
+   - Ordered by trashedTime descending (newest first)
+   - Configurable days back (default: 7) and max results (default: 100)
+
+3. QueryDriveActivity: Comprehensive activity history via Drive Activity API
+   - Uses Drive Activity API v2 for complete activity logs
+   - Includes permanent deletions, edits, moves, permission changes
+   - Parses multiple action types: Create, Edit, Move, Rename, Delete, Restore, Permission
+   - Distinguishes between trash (TRASH) and permanent deletion (PERMANENT_DELETE)
+   - Returns DriveActivityInfo with timestamp, actors, targets, action details
+   - Configurable time filter (default: 7 days) and page size (default: 100)
+
+4. ListRevisions: Get revision history for a specific file
+   - Uses Revisions.List() API endpoint
+   - Returns RevisionInfo with modification time, size, author
+   - Shows keepForever and published status
+   - Displays in reverse chronological order (newest first)
+   - Note: May be incomplete for files with large revision history
+
+5. GetRevision: Get specific revision metadata
+   - Used internally for detailed revision information
 ```
 
 ## Technology Stack
@@ -362,6 +434,10 @@ golangci-lint run  # if installed
 | `folder download` | ✅ | Parallel recursive download |
 | `folder list` | ✅ | Display folder contents |
 | `search` | ✅ | Search with MIME type filters |
+| `activity changes` | ✅ | List recent Drive changes |
+| `activity deleted` | ✅ | List recently deleted files (trash) |
+| `activity history` | ✅ | Comprehensive activity (incl. permanent deletions) |
+| `activity revisions` | ✅ | View file revision history |
 | `--id` flag | ✅ | Direct ID support |
 | `--overwrite` flag | ✅ | Skip overwrite prompts |
 | `--parallel` flag | ✅ | Configurable concurrency (1-20) |
