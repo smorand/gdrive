@@ -281,9 +281,14 @@ func (ds *DriveService) DownloadFile(fileID, localPath string, preserveTimestamp
 
 	// Copy with progress
 	if showProgress {
-		// For exported files, size might be 0, use ContentLength from response
+		// For exported files, the size from metadata is often inaccurate
+		// Use -1 for indeterminate progress bar to avoid "current number exceeds max" error
 		size := fileMetadata.Size
-		if size == 0 && resp.ContentLength > 0 {
+		if exportFormat != "" {
+			// Exported files: use indeterminate progress (-1) since the export size differs from source size
+			size = -1
+		} else if size == 0 && resp.ContentLength > 0 {
+			// Regular files with missing size: use ContentLength from response
 			size = resp.ContentLength
 		}
 		bar := progressbar.DefaultBytes(size, fmt.Sprintf("Downloading %s", fileMetadata.Name))
