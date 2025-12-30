@@ -32,9 +32,9 @@ const (
 	tokenFilePerm       = 0600
 
 	// Default config paths
-	defaultConfigDirName       = ".gdrive"
-	defaultTokenFileName       = "token.json"
-	defaultCredentialsFileName = "credentials.json"
+	defaultConfigDirName       = ".credentials"
+	defaultTokenFileName       = "token_gdrive.json"
+	defaultCredentialsFileName = "google_credentials.json"
 
 	// Environment variable names
 	envConfigDir        = "GDRIVE_CONFIG_DIR"
