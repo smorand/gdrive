@@ -1,4 +1,5 @@
-package main
+// Package auth provides OAuth2 authentication for Google Drive API.
+package auth
 
 import (
 	"context"
@@ -20,55 +21,55 @@ import (
 
 const (
 	// OAuth server configuration
-	oauthServerPort     = ":8080"
-	oauthCallbackPath   = "/oauth2callback"
-	oauthRedirectURL    = "http://localhost:8080/oauth2callback"
-	oauthServerTimeout  = 5 * time.Second
-	oauthTimeout        = 3 * time.Minute
-	oauthServerStartup  = 100 * time.Millisecond
+	oauthServerPort    = ":8080"
+	oauthCallbackPath  = "/oauth2callback"
+	oauthRedirectURL   = "http://localhost:8080/oauth2callback"
+	oauthServerTimeout = 5 * time.Second
+	oauthTimeout       = 3 * time.Minute
+	oauthServerStartup = 100 * time.Millisecond
 
 	// File permissions
-	configDirPerm       = 0755
-	tokenFilePerm       = 0600
+	configDirPerm = 0755
+	tokenFilePerm = 0600
 
 	// Default config paths
-	defaultConfigDirName       = ".credentials"
-	defaultTokenFileName       = "token_gdrive.json"
-	defaultCredentialsFileName = "google_credentials.json"
+	DefaultConfigDirName       = ".credentials"
+	DefaultTokenFileName       = "token_gdrive.json"
+	DefaultCredentialsFileName = "google_credentials.json"
 
 	// Environment variable names
-	envConfigDir        = "GDRIVE_CONFIG_DIR"
-	envCredentialsPath  = "GDRIVE_CREDENTIALS_PATH"
+	EnvConfigDir       = "GDRIVE_CONFIG_DIR"
+	EnvCredentialsPath = "GDRIVE_CREDENTIALS_PATH"
 )
 
-// Config holds the configuration paths
+// Config holds the configuration paths for authentication.
 type Config struct {
 	ConfigDir       string
 	CredentialsPath string
 }
 
-// NewConfig creates a new Config with priority: CLI args > env vars > defaults
+// NewConfig creates a new Config with priority: CLI args > env vars > defaults.
 func NewConfig(cliConfigDir, cliCredentialsPath string) *Config {
 	cfg := &Config{}
 
 	// Determine config directory: CLI > Env > Default
 	if cliConfigDir != "" {
 		cfg.ConfigDir = cliConfigDir
-	} else if envDir := os.Getenv(envConfigDir); envDir != "" {
+	} else if envDir := os.Getenv(EnvConfigDir); envDir != "" {
 		cfg.ConfigDir = envDir
 	} else {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			cfg.ConfigDir = defaultConfigDirName
+			cfg.ConfigDir = DefaultConfigDirName
 		} else {
-			cfg.ConfigDir = filepath.Join(home, defaultConfigDirName)
+			cfg.ConfigDir = filepath.Join(home, DefaultConfigDirName)
 		}
 	}
 
 	// Determine credentials path: CLI > Env > Default lookup
 	if cliCredentialsPath != "" {
 		cfg.CredentialsPath = cliCredentialsPath
-	} else if envCred := os.Getenv(envCredentialsPath); envCred != "" {
+	} else if envCred := os.Getenv(EnvCredentialsPath); envCred != "" {
 		cfg.CredentialsPath = envCred
 	}
 	// If still empty, will be resolved by GetCredentialsPath
@@ -76,17 +77,17 @@ func NewConfig(cliConfigDir, cliCredentialsPath string) *Config {
 	return cfg
 }
 
-// GetConfigDir returns the config directory path
+// GetConfigDir returns the config directory path.
 func (c *Config) GetConfigDir() string {
 	return c.ConfigDir
 }
 
-// GetTokenPath returns the token file path
+// GetTokenPath returns the token file path.
 func (c *Config) GetTokenPath() string {
-	return filepath.Join(c.ConfigDir, defaultTokenFileName)
+	return filepath.Join(c.ConfigDir, DefaultTokenFileName)
 }
 
-// GetCredentialsPath returns the credentials file path
+// GetCredentialsPath returns the credentials file path.
 func (c *Config) GetCredentialsPath() (string, error) {
 	// If explicitly set via CLI or env, use it
 	if c.CredentialsPath != "" {
@@ -97,20 +98,20 @@ func (c *Config) GetCredentialsPath() (string, error) {
 	}
 
 	// Try current directory first
-	if _, err := os.Stat(defaultCredentialsFileName); err == nil {
-		return defaultCredentialsFileName, nil
+	if _, err := os.Stat(DefaultCredentialsFileName); err == nil {
+		return DefaultCredentialsFileName, nil
 	}
 
 	// Try config directory
-	configPath := filepath.Join(c.ConfigDir, defaultCredentialsFileName)
+	configPath := filepath.Join(c.ConfigDir, DefaultCredentialsFileName)
 	if _, err := os.Stat(configPath); err == nil {
 		return configPath, nil
 	}
 
-	return "", fmt.Errorf("%s not found in current directory or %s", defaultCredentialsFileName, c.ConfigDir)
+	return "", fmt.Errorf("%s not found in current directory or %s", DefaultCredentialsFileName, c.ConfigDir)
 }
 
-// GetTokenFromWeb requests a token from the web using a local server
+// GetTokenFromWeb requests a token from the web using a local server.
 func GetTokenFromWeb(config *oauth2.Config) (*oauth2.Token, error) {
 	// Use localhost with configured port
 	config.RedirectURL = oauthRedirectURL
@@ -201,7 +202,7 @@ func GetTokenFromWeb(config *oauth2.Config) (*oauth2.Token, error) {
 	return tok, nil
 }
 
-// SaveToken saves a token to a file path
+// SaveToken saves a token to a file path.
 func SaveToken(path string, token *oauth2.Token) error {
 	// Create config directory if it doesn't exist
 	dir := filepath.Dir(path)
@@ -218,7 +219,7 @@ func SaveToken(path string, token *oauth2.Token) error {
 	return json.NewEncoder(f).Encode(token)
 }
 
-// LoadToken retrieves a token from a local file
+// LoadToken retrieves a token from a local file.
 func LoadToken(path string) (*oauth2.Token, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -231,7 +232,7 @@ func LoadToken(path string) (*oauth2.Token, error) {
 	return tok, err
 }
 
-// GetAuthenticatedService returns an authenticated Drive service
+// GetAuthenticatedService returns an authenticated Drive service.
 func GetAuthenticatedService(cfg *Config) (*drive.Service, error) {
 	credPath, err := cfg.GetCredentialsPath()
 	if err != nil {
@@ -270,7 +271,7 @@ func GetAuthenticatedService(cfg *Config) (*drive.Service, error) {
 	return srv, nil
 }
 
-// GetAuthenticatedActivityService returns an authenticated Drive Activity service
+// GetAuthenticatedActivityService returns an authenticated Drive Activity service.
 func GetAuthenticatedActivityService(cfg *Config) (*driveactivity.Service, error) {
 	credPath, err := cfg.GetCredentialsPath()
 	if err != nil {

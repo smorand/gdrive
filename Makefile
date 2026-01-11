@@ -8,30 +8,11 @@ GOOS=$(shell go env GOOS)
 GOARCH=$(shell go env GOARCH)
 CURRENT_PLATFORM=$(GOOS)-$(GOARCH)
 
-# Auto-detect project structure
-HAS_SRC_DIR=$(shell [ -d src ] && echo "yes" || echo "no")
-HAS_CMD_DIR=$(shell [ -d cmd ] && echo "yes" || echo "no")
-
-# Set directories based on project structure
-ifeq ($(HAS_SRC_DIR),yes)
-	SRC_DIR=src
-	CMD_PATH=$(SRC_DIR)
-	BUILD_DIR=bin
-	GO_MOD_PATH=$(SRC_DIR)/go.mod
-	GO_SUM_PATH=$(SRC_DIR)/go.sum
-else ifeq ($(HAS_CMD_DIR),yes)
-	SRC_DIR=.
-	CMD_PATH=./cmd/$(BINARY_NAME)
-	BUILD_DIR=bin
-	GO_MOD_PATH=go.mod
-	GO_SUM_PATH=go.sum
-else
-	SRC_DIR=.
-	CMD_PATH=.
-	BUILD_DIR=bin
-	GO_MOD_PATH=go.mod
-	GO_SUM_PATH=go.sum
-endif
+# Standard Go project layout (cmd/internal structure)
+CMD_PATH=./cmd/$(BINARY_NAME)
+BUILD_DIR=bin
+GO_MOD_PATH=go.mod
+GO_SUM_PATH=go.sum
 
 # Platform-specific binary names
 BINARY_LINUX=$(BUILD_DIR)/$(BINARY_NAME)-linux-amd64
@@ -52,31 +33,19 @@ rebuild: clean-all build
 $(BINARY_LINUX): $(GO_SUM_PATH)
 	@echo "Building $(BINARY_NAME) for Linux AMD64..."
 	@mkdir -p $(BUILD_DIR)
-ifeq ($(HAS_SRC_DIR),yes)
-	@cd $(SRC_DIR) && GOOS=linux GOARCH=amd64 go build -o ../$(BINARY_LINUX) .
-else
 	@GOOS=linux GOARCH=amd64 go build -o $(BINARY_LINUX) $(CMD_PATH)
-endif
 	@echo "✓ Built: $(BINARY_LINUX)"
 
 $(BINARY_DARWIN_INTEL): $(GO_SUM_PATH)
 	@echo "Building $(BINARY_NAME) for macOS Intel (AMD64)..."
 	@mkdir -p $(BUILD_DIR)
-ifeq ($(HAS_SRC_DIR),yes)
-	@cd $(SRC_DIR) && GOOS=darwin GOARCH=amd64 go build -o ../$(BINARY_DARWIN_INTEL) .
-else
 	@GOOS=darwin GOARCH=amd64 go build -o $(BINARY_DARWIN_INTEL) $(CMD_PATH)
-endif
 	@echo "✓ Built: $(BINARY_DARWIN_INTEL)"
 
 $(BINARY_DARWIN_ARM): $(GO_SUM_PATH)
 	@echo "Building $(BINARY_NAME) for macOS Apple Silicon (ARM64)..."
 	@mkdir -p $(BUILD_DIR)
-ifeq ($(HAS_SRC_DIR),yes)
-	@cd $(SRC_DIR) && GOOS=darwin GOARCH=arm64 go build -o ../$(BINARY_DARWIN_ARM) .
-else
 	@GOOS=darwin GOARCH=arm64 go build -o $(BINARY_DARWIN_ARM) $(CMD_PATH)
-endif
 	@echo "✓ Built: $(BINARY_DARWIN_ARM)"
 
 # Create launcher script
@@ -135,25 +104,10 @@ $(LAUNCHER_SCRIPT): $(BINARY_LINUX) $(BINARY_DARWIN_INTEL) $(BINARY_DARWIN_ARM)
 # Generate go.sum
 $(GO_SUM_PATH): $(GO_MOD_PATH)
 	@echo "Downloading dependencies..."
-ifeq ($(HAS_SRC_DIR),yes)
-	@cd $(SRC_DIR) && go mod download
-	@cd $(SRC_DIR) && go mod tidy
-	@touch $(GO_SUM_PATH)
-else
 	@go mod download
 	@go mod tidy
 	@touch $(GO_SUM_PATH)
-endif
 	@echo "Dependencies downloaded"
-
-# Generate go.mod (only if it doesn't exist)
-$(GO_MOD_PATH):
-	@echo "Initializing Go module..."
-ifeq ($(HAS_SRC_DIR),yes)
-	@cd $(SRC_DIR) && go mod init $(BINARY_NAME)
-else
-	@go mod init $(BINARY_NAME)
-endif
 
 # Install binary (installs the current platform binary)
 install: build
@@ -220,39 +174,27 @@ clean:
 	@rm -rf $(BUILD_DIR)
 	@echo "Clean complete!"
 
-# Clean all (including go.mod and go.sum)
+# Clean all (including go.sum - but NOT go.mod)
 clean-all: clean
-	@echo "Cleaning go.mod & go.sum..."
-	@rm -f $(GO_MOD_PATH) $(GO_SUM_PATH)
+	@echo "Cleaning go.sum..."
+	@rm -f $(GO_SUM_PATH)
 	@echo "Clean complete!"
 
 # Run tests
 test:
 	@echo "Running tests..."
-ifeq ($(HAS_SRC_DIR),yes)
-	@cd $(SRC_DIR) && go test -v ./...
-else
 	@go test -v ./...
-endif
 
 # Format code
 fmt:
 	@echo "Formatting code..."
-ifeq ($(HAS_SRC_DIR),yes)
-	@cd $(SRC_DIR) && go fmt ./...
-else
 	@go fmt ./...
-endif
 	@echo "Format complete!"
 
 # Run go vet
 vet:
 	@echo "Running go vet..."
-ifeq ($(HAS_SRC_DIR),yes)
-	@cd $(SRC_DIR) && go vet ./...
-else
 	@go vet ./...
-endif
 	@echo "Vet complete!"
 
 # Run all checks (fmt, vet, test)
@@ -265,6 +207,7 @@ info:
 	@echo "Binary name: $(BINARY_NAME)"
 	@echo "Build directory: $(BUILD_DIR)"
 	@echo "Current binary: $(CURRENT_BINARY)"
+	@echo "Command path: $(CMD_PATH)"
 
 # Help
 help:
@@ -276,7 +219,7 @@ help:
 	@echo "  install-launcher - Install launcher script with all platform binaries"
 	@echo "  uninstall       - Remove installed binary"
 	@echo "  clean           - Remove build artifacts"
-	@echo "  clean-all       - Remove build artifacts, go.mod, and go.sum"
+	@echo "  clean-all       - Remove build artifacts and go.sum"
 	@echo "  test            - Run tests"
 	@echo "  fmt             - Format code"
 	@echo "  vet             - Run go vet"

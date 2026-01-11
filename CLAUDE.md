@@ -4,11 +4,39 @@
 
 A high-performance command-line tool for Google Drive operations, built in Go. Provides comprehensive file and folder management with parallel downloads, progress tracking, smart path resolution, and flexible configuration management.
 
+## Project Structure
+
+This project follows the **Standard Go Project Layout**:
+
+```
+gdrive/
+├── cmd/
+│   └── gdrive/
+│       └── main.go           # Minimal entry point
+├── internal/
+│   ├── auth/
+│   │   ├── auth.go           # OAuth2 authentication
+│   │   └── auth_test.go      # Authentication tests
+│   ├── cli/
+│   │   └── cli.go            # CLI commands implementation
+│   └── drive/
+│       ├── service.go        # Drive API operations
+│       └── activity.go       # Activity tracking functionality
+├── bin/                      # Built binaries (gitignored)
+├── go.mod                    # Go module definition (at root)
+├── go.sum                    # Dependency checksums
+├── Makefile                  # Build automation
+├── CLAUDE.md                 # This file
+└── README.md                 # User documentation
+```
+
+**Note:** This project does NOT use a `src/` directory, following Go best practices.
+
 ## Architecture
 
 ### Core Components
 
-1. **auth.go** - Authentication module
+1. **internal/auth/auth.go** - Authentication module
    - Handles OAuth2 flow with Google Drive API
    - Manages credential storage with configurable paths
    - Configuration priority: CLI flags > Environment variables > Defaults
@@ -18,28 +46,34 @@ A high-performance command-line tool for Google Drive operations, built in Go. P
    - `NewConfig()`: Creates Config with priority resolution
    - Environment variables: `GDRIVE_CONFIG_DIR`, `GDRIVE_CREDENTIALS_PATH`
 
-2. **drive_service.go** - Drive operations service
-   - `DriveService` struct encapsulates all Drive API interactions
+2. **internal/drive/service.go** - Drive operations service
+   - `Service` struct encapsulates all Drive API interactions
    - Path resolution: converts human paths to Google Drive folder IDs
    - File operations: upload, download with progress tracking
    - Folder operations: recursive traversal and sync
    - List and search operations: query Drive API for file metadata
    - Comprehensive MIME type mappings for all common file types
-   - Activity tracking: changes list and file revision history
-   - `ChangeInfo` and `RevisionInfo` structs for activity data
+   - Exports: `MIMETypeMappings`, `ExportFormats` for MIME type handling
 
-3. **cli.go** - Command-line interface
+3. **internal/drive/activity.go** - Activity tracking
+   - `ChangeInfo` and `RevisionInfo` structs for activity data
+   - `DriveActivityInfo` for comprehensive activity history
+   - Functions: `ListChanges()`, `ListTrashedFiles()`, `ListRevisions()`, `QueryDriveActivity()`
+
+4. **internal/cli/cli.go** - Command-line interface
    - Built with Cobra framework for robust CLI
    - Four command groups: `file`, `folder`, `search`, and `activity`
    - fatih/color library for colored terminal output
    - progressbar/v3 library for real-time progress tracking
-   - Helper functions for formatting and display
+   - Explicit initialization via constructor functions (no `init()`)
+   - `SetupRootCommand()`: Configures global flags and pre-run hook
+   - `FileCmd()`, `FolderCmd()`, `SearchCmd()`, `ActivityCmd()`: Command constructors
 
-4. **main.go** - Main entry point
-   - Sets up Cobra command structure
-   - Defines global flags: `--config-dir`, `--credentials`
-   - Initializes global Config instance via `PersistentPreRun`
-   - Delegates to CLI handlers
+5. **cmd/gdrive/main.go** - Minimal entry point
+   - Creates root Cobra command
+   - Calls `cli.SetupRootCommand()` for global configuration
+   - Adds subcommands via constructor functions
+   - Handles execution and error output
 
 ### Key Design Patterns
 
@@ -265,14 +299,33 @@ A high-performance command-line tool for Google Drive operations, built in Go. P
 
 ## Build and Deployment
 
-### Build Script
-`build.sh` performs:
-1. Change to src/ directory
-2. Download dependencies via `go mod download`
-3. Build binary with `go build -o ../gdrive .`
+### Build with Makefile
+
+```bash
+# Build for current platform
+make build
+
+# Build for all platforms (Linux, macOS Intel, macOS ARM)
+make build-all
+
+# Clean and rebuild
+make rebuild
+
+# Install to /usr/local/bin
+make install
+
+# Run tests
+make test
+
+# Format code
+make fmt
+
+# Run linter
+make vet
+```
 
 ### Dependencies
-All dependencies are declared in `src/go.mod`:
+All dependencies are declared in `go.mod` (at project root):
 - `github.com/fatih/color` - Terminal colors
 - `github.com/schollz/progressbar/v3` - Progress bars
 - `github.com/spf13/cobra` - CLI framework
@@ -280,60 +333,69 @@ All dependencies are declared in `src/go.mod`:
 - `google.golang.org/api` - Google API client
 
 ### Binary Output
-- Binary name: `gdrive`
-- Location: Project root after build
-- Can be moved to `/usr/local/bin/` for global access
-- No dependencies required to run (statically linked)
+- Binary location: `bin/gdrive-{os}-{arch}` (e.g., `bin/gdrive-linux-amd64`)
+- Install with `make install` to `/usr/local/bin/`
+- No runtime dependencies (statically linked)
 
 ## Common Modifications
 
 ### Adding a New Command
 
-1. Add command variable in `cli.go`:
+1. Create command in `internal/cli/cli.go`:
 ```go
-var newCmd = &cobra.Command{
-    Use:   "new-command ARG",
-    Short: "Description",
-    Args:  cobra.ExactArgs(1),
-    RunE:  runNewCommand,
+func newSubCmd() *cobra.Command {
+    cmd := &cobra.Command{
+        Use:   "new-command ARG",
+        Short: "Description",
+        Args:  cobra.ExactArgs(1),
+        RunE:  runNewCommand,
+    }
+    cmd.Flags().BoolP("flag", "f", false, "Flag description")
+    return cmd
 }
-```
 
-2. Register in `init()`:
-```go
-func init() {
-    rootCmd.AddCommand(newCmd)
-}
-```
-
-3. Implement handler:
-```go
 func runNewCommand(cmd *cobra.Command, args []string) error {
     // Implementation
     return nil
 }
 ```
 
-4. Add method to `DriveService` if needed
-5. Update README.md
-6. Rebuild with `./build.sh`
+2. Register in parent command constructor (e.g., `FileCmd()`):
+```go
+func FileCmd() *cobra.Command {
+    cmd := &cobra.Command{...}
+    cmd.AddCommand(newSubCmd())
+    return cmd
+}
+```
+
+3. Add method to `drive.Service` if needed (in `internal/drive/service.go`)
+4. Update README.md and CLAUDE.md
+5. Rebuild with `make build`
+
+**Note:** Do NOT use `init()` functions. Use explicit constructor functions instead.
 
 ### Adding New Drive API Operations
 
-1. Add method to `DriveService` struct in `drive_service.go`
+1. Add method to `Service` struct in `internal/drive/service.go`
 2. Follow existing patterns: error handling, progress display
-3. Use `ds.Service.Files` for API calls
+3. Use `ds.srv.Files` for API calls
 4. Return structured data (pointer, slice, error)
 
 ## Testing Strategy
 
 ### Build Verification
 ```bash
-./build.sh
-./gdrive --help
-./gdrive file --help
-./gdrive folder --help
-./gdrive search --help
+make build
+./bin/gdrive-linux-amd64 --help
+./bin/gdrive-linux-amd64 file --help
+./bin/gdrive-linux-amd64 folder --help
+./bin/gdrive-linux-amd64 search --help
+```
+
+### Run Unit Tests
+```bash
+make test
 ```
 
 ### Functional Testing
@@ -375,20 +437,21 @@ Test key operations:
 
 ### Updating Dependencies
 ```bash
-cd src
 go get -u ./...
 go mod tidy
 ```
 
 ### Code Formatting
 ```bash
-cd src
-gofmt -w .
+make fmt
+# Or manually:
+gofmt -w ./cmd ./internal
 ```
 
 ### Linting
 ```bash
-cd src
+make vet
+# Or manually:
 go vet ./...
 golangci-lint run  # if installed
 ```

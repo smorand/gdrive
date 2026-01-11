@@ -29,14 +29,19 @@ A command-line tool for syncing files and folders with Google Drive, built in Go
 ### Build
 
 ```bash
-./build.sh
+make build
 ```
 
-This creates a `gdrive` binary in the project root.
+This creates a platform-specific binary in `bin/` (e.g., `bin/gdrive-linux-amd64`).
+
+To build for all platforms:
+```bash
+make build-all
+```
 
 To install globally:
 ```bash
-sudo mv gdrive /usr/local/bin/
+make install
 ```
 
 ## Authentication
@@ -343,15 +348,24 @@ You can also use explicit MIME types like `image/jpeg` or `application/pdf`.
 
 ## Architecture
 
+This project follows the Standard Go Project Layout:
+
 ```
-gdrive-go/
-├── src/
-│   ├── main.go          # Main entry point
-│   ├── cli.go           # CLI commands implementation
-│   ├── auth.go          # OAuth2 authentication
-│   ├── drive_service.go # Drive API operations
-│   └── go.mod           # Go dependencies
-├── build.sh             # Build script
+gdrive/
+├── cmd/
+│   └── gdrive/
+│       └── main.go           # Minimal entry point
+├── internal/
+│   ├── auth/
+│   │   └── auth.go           # OAuth2 authentication
+│   ├── cli/
+│   │   └── cli.go            # CLI commands implementation
+│   └── drive/
+│       ├── service.go        # Drive API operations
+│       └── activity.go       # Activity tracking
+├── bin/                      # Built binaries (gitignored)
+├── go.mod                    # Go module definition
+├── Makefile                  # Build automation
 └── README.md
 ```
 
