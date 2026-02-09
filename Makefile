@@ -40,13 +40,15 @@ $(BINARY_DARWIN_INTEL): $(GO_SUM_PATH)
 	@echo "Building $(BINARY_NAME) for macOS Intel (AMD64)..."
 	@mkdir -p $(BUILD_DIR)
 	@GOOS=darwin GOARCH=amd64 go build -o $(BINARY_DARWIN_INTEL) $(CMD_PATH)
-	@echo "✓ Built: $(BINARY_DARWIN_INTEL)"
+	@codesign -s - $(BINARY_DARWIN_INTEL)
+	@echo "✓ Built and signed: $(BINARY_DARWIN_INTEL)"
 
 $(BINARY_DARWIN_ARM): $(GO_SUM_PATH)
 	@echo "Building $(BINARY_NAME) for macOS Apple Silicon (ARM64)..."
 	@mkdir -p $(BUILD_DIR)
 	@GOOS=darwin GOARCH=arm64 go build -o $(BINARY_DARWIN_ARM) $(CMD_PATH)
-	@echo "✓ Built: $(BINARY_DARWIN_ARM)"
+	@codesign -s - $(BINARY_DARWIN_ARM)
+	@echo "✓ Built and signed: $(BINARY_DARWIN_ARM)"
 
 # Create launcher script
 $(LAUNCHER_SCRIPT): $(BINARY_LINUX) $(BINARY_DARWIN_INTEL) $(BINARY_DARWIN_ARM)

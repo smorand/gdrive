@@ -193,13 +193,9 @@ func printItemRow(ds *drive.Service, item *driveapi.File) {
 		name = name[:35] + "..."
 	}
 
-	// Truncate ID for display
 	id := item.Id
-	if len(id) > 38 {
-		id = id[:35] + "..."
-	}
 
-	fmt.Printf("%-10s %-40s %-40s %-20s %12s\n", itemType, name, id, modifiedStr, sizeStr)
+	fmt.Printf("%-10s %-40s %-44s %-20s %12s\n", itemType, name, id, modifiedStr, sizeStr)
 }
 
 func formatSize(sizeBytes int64) string {
@@ -1594,7 +1590,7 @@ func runFolderList(cmd *cobra.Command, args []string) error {
 	// Print header
 	fmt.Printf("\nContents of %s\n", remoteFolder)
 	fmt.Println(strings.Repeat("─", 120))
-	fmt.Printf("%-10s %-40s %-40s %-20s %12s\n", "Type", "Name", "ID", "Modified", "Size")
+	fmt.Printf("%-10s %-40s %-44s %-20s %12s\n", "Type", "Name", "ID", "Modified", "Size")
 	fmt.Println(strings.Repeat("─", 120))
 
 	// Print rows
@@ -1644,7 +1640,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	// Print header
 	fmt.Printf("\nSearch Results for '%s'\n", query)
 	fmt.Println(strings.Repeat("─", 120))
-	fmt.Printf("%-10s %-40s %-40s %-20s %12s\n", "Type", "Name", "ID", "Modified", "Size")
+	fmt.Printf("%-10s %-40s %-44s %-20s %12s\n", "Type", "Name", "ID", "Modified", "Size")
 	fmt.Println(strings.Repeat("─", 120))
 
 	// Print rows

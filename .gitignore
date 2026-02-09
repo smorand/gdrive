@@ -5,6 +5,7 @@ bin/
 *.dll
 *.so
 *.dylib
+gdrive-darwin
 
 # Test binary, built with `go test -c`
 *.test
