@@ -25,6 +25,7 @@ func main() {
 	rootCmd.AddCommand(cli.FolderCmd())
 	rootCmd.AddCommand(cli.SearchCmd())
 	rootCmd.AddCommand(cli.ActivityCmd())
+	rootCmd.AddCommand(cli.MCPCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

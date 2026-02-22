@@ -37,5 +37,13 @@ token.json
 dist/
 build/
 
+# Terraform
+init/.terraform/
+init/.terraform.lock.hcl
+init/terraform.tfstate*
+iac/.terraform/
+iac/.terraform.lock.hcl
+
 # Conversation transcripts
 gdrive.txt
+.worktrees/

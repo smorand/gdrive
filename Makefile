@@ -1,4 +1,5 @@
 .PHONY: build build-all install uninstall clean clean-all rebuild test fmt vet check help
+.PHONY: plan deploy undeploy init-plan init-deploy init-destroy terraform-help check-init update-backend configure-docker-auth
 
 # Binary name derived from current directory
 BINARY_NAME=$(shell basename $$(pwd))
@@ -203,6 +204,131 @@ vet:
 check: fmt vet test
 	@echo "All checks passed!"
 
+# ============================================
+# Terraform targets
+# ============================================
+
+# Check if init has been deployed (by checking if state backend exists)
+check-init:
+	@if [ ! -d "init/.terraform" ]; then \
+		echo ""; \
+		echo "ERROR: Initialization not completed!"; \
+		echo ""; \
+		echo "You must run initialization BEFORE deploying main infrastructure:"; \
+		echo ""; \
+		echo "  1. make init-plan       # Review what will be created"; \
+		echo "  2. make init-deploy     # Deploy state backend & service accounts"; \
+		echo "  3. make plan            # Then plan main infrastructure"; \
+		echo "  4. make deploy          # Finally deploy main infrastructure"; \
+		echo ""; \
+		echo "The init step creates:"; \
+		echo "  - Terraform state backend (GCS)"; \
+		echo "  - Service accounts / IAM roles"; \
+		echo "  - API enablement (GCP)"; \
+		echo ""; \
+		exit 1; \
+	fi
+
+# Update iac/provider.tf with backend configuration from init/
+update-backend:
+	@echo "Updating iac/provider.tf with backend configuration..."
+	@if [ ! -d "init/.terraform" ]; then \
+		echo "Error: init/.terraform not found. Run 'make init-deploy' first."; \
+		exit 1; \
+	fi
+	@if [ ! -f "iac/provider.tf.template" ]; then \
+		echo "Error: iac/provider.tf.template not found."; \
+		exit 1; \
+	fi
+	@BACKEND_CONFIG=$$(cd init && terraform output -raw backend_config 2>/dev/null); \
+	if [ -z "$$BACKEND_CONFIG" ]; then \
+		echo "Error: Could not get backend_config from terraform output."; \
+		exit 1; \
+	fi; \
+	PLACEHOLDER_LINE=$$(grep -n "BACKEND_PLACEHOLDER" iac/provider.tf.template | cut -d: -f1 | head -1); \
+	if [ -z "$$PLACEHOLDER_LINE" ]; then \
+		echo "Error: # BACKEND_PLACEHOLDER not found in template."; \
+		exit 1; \
+	fi; \
+	head -n $$((PLACEHOLDER_LINE - 1)) iac/provider.tf.template > iac/provider.tf; \
+	echo "$$BACKEND_CONFIG" >> iac/provider.tf; \
+	tail -n +$$((PLACEHOLDER_LINE + 1)) iac/provider.tf.template >> iac/provider.tf; \
+	echo "Successfully updated iac/provider.tf"; \
+	echo ""; \
+	echo "Backend configuration:"; \
+	echo "$$BACKEND_CONFIG"
+
+# Configure Docker authentication for Artifact Registry (GCP)
+configure-docker-auth:
+	@REGISTRY_LOCATION=$$(cd init && terraform output -raw docker_registry_location 2>/dev/null); \
+	if [ -n "$$REGISTRY_LOCATION" ]; then \
+		echo "Configuring Docker authentication for $$REGISTRY_LOCATION..."; \
+		gcloud auth configure-docker $$REGISTRY_LOCATION --quiet; \
+		echo "Docker authentication configured"; \
+	fi
+
+# IAC targets (main infrastructure)
+plan: check-init
+	@echo "Planning main infrastructure..."
+	cd iac && terraform init -reconfigure && terraform plan
+
+deploy: check-init
+	@echo "Deploying main infrastructure..."
+	cd iac && terraform init -reconfigure && terraform apply -auto-approve
+
+undeploy: check-init
+	@echo "Destroying main infrastructure..."
+	cd iac && terraform init -reconfigure && terraform destroy -auto-approve
+
+# Init targets (backend, state, service accounts)
+init-plan:
+	@echo "Planning initialization..."
+	cd init && terraform init -reconfigure && terraform plan
+
+init-deploy:
+	@echo "Deploying initialization..."
+	cd init && terraform init -reconfigure && terraform apply -auto-approve
+	@$(MAKE) update-backend
+	@$(MAKE) configure-docker-auth
+	@echo ""
+	@echo "Initialization complete!"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  1. Run: make plan"
+	@echo "  2. Run: make deploy"
+
+init-destroy:
+	@echo "Destroying initialization resources..."
+	@echo "WARNING: This will destroy state backend and service accounts!"
+	@read -p "Are you sure? (yes/no): " answer && [ "$$answer" = "yes" ]
+	cd init && terraform init -reconfigure && terraform destroy -auto-approve
+
+# Terraform help
+terraform-help:
+	@echo "Terraform Makefile Targets:"
+	@echo ""
+	@echo "Deployment Workflow (First Time):"
+	@echo "  1. make init-plan       - Plan initialization (state backend, service accounts)"
+	@echo "  2. make init-deploy     - Deploy initialization (auto-updates backend + docker auth)"
+	@echo "  3. make plan            - Plan main infrastructure"
+	@echo "  4. make deploy          - Deploy main infrastructure"
+	@echo ""
+	@echo "Main Infrastructure:"
+	@echo "  make plan               - Plan main infrastructure changes"
+	@echo "  make deploy             - Deploy main infrastructure"
+	@echo "  make undeploy           - Destroy main infrastructure"
+	@echo ""
+	@echo "Initialization (One-time Setup):"
+	@echo "  make init-plan          - Plan initialization resources"
+	@echo "  make init-deploy        - Deploy initialization resources"
+	@echo "  make init-destroy       - Destroy initialization (DANGEROUS!)"
+	@echo ""
+	@echo "Utilities:"
+	@echo "  make update-backend       - Manually regenerate iac/provider.tf"
+	@echo "  make configure-docker-auth - Manually configure Docker registry auth"
+	@echo ""
+	@echo "Note: You must run 'make init-deploy' BEFORE running 'make deploy'"
+
 # Show current platform info
 info:
 	@echo "Current platform: $(CURRENT_PLATFORM)"
@@ -228,6 +354,15 @@ help:
 	@echo "  check           - Run fmt, vet, and test"
 	@echo "  info            - Show current platform information"
 	@echo "  help            - Show this help message"
+	@echo ""
+	@echo "Infrastructure targets:"
+	@echo "  init-plan       - Plan initialization resources"
+	@echo "  init-deploy     - Deploy initialization resources"
+	@echo "  init-destroy    - Destroy initialization (DANGEROUS!)"
+	@echo "  plan            - Plan main infrastructure"
+	@echo "  deploy          - Deploy main infrastructure"
+	@echo "  undeploy        - Destroy main infrastructure"
+	@echo "  terraform-help  - Show detailed Terraform help"
 	@echo ""
 	@echo "Platform-specific binaries are created in $(BUILD_DIR)/ with suffixes:"
 	@echo "  -linux-amd64   - Linux (Intel/AMD 64-bit)"
