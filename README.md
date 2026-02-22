@@ -1,6 +1,6 @@
 # gdrive
 
-A command-line tool for syncing files and folders with Google Drive, built in Go for performance and portability.
+A command-line tool and MCP server for Google Drive operations, built in Go for performance and portability.
 
 ## Features
 
@@ -17,6 +17,9 @@ A command-line tool for syncing files and folders with Google Drive, built in Go
 - 🔐 **Permissions Management**: Share files, manage permissions, control access
 - 📦 **Google Workspace Export**: Automatic export to standard formats (PDF, DOCX, XLSX, PPTX)
 - 📜 **Activity Tracking**: View recent changes and file revision history
+- 🤖 **MCP Server**: HTTP Streamable server exposing 20 Drive tools for AI agents
+- 🔑 **OAuth2 Server**: RFC-compliant authorization with PKCE S256 for MCP clients
+- ☁️ **Cloud Run**: Terraform-managed deployment with custom domain
 
 ## Installation
 
@@ -396,6 +399,85 @@ Google Workspace files (Docs, Sheets, Slides) are automatically exported to stan
 Other Google Workspace files (Forms, Drawings, Maps, Sites) cannot be downloaded and are automatically skipped with a warning message.
 
 The export happens transparently during `file download` and `folder download` operations, with proper file extension adjustment.
+
+## MCP Server
+
+The MCP (Model Context Protocol) HTTP Streamable server exposes all Google Drive operations as tools for AI agents.
+
+### Quick Start
+
+```bash
+# Run locally with OAuth credentials file
+gdrive mcp --port 8080 --credential-file credentials.json
+
+# Run with GCP Secret Manager
+gdrive mcp --port 8080 --secret-name scm-pwd-gdrive-oauth-creds --secret-project my-project
+```
+
+### Available Tools (20)
+
+| Tool | Description |
+|------|-------------|
+| `ping` | Test MCP connectivity |
+| `drive_search` | Search files across Drive |
+| `drive_folder_list` | List folder contents |
+| `drive_file_info` | Get file metadata with path |
+| `drive_download_url` | Get signed download URL |
+| `drive_export_url` | Export Workspace files (Docs/Sheets/Slides) |
+| `drive_file_revisions` | List file revision history |
+| `drive_activity_changes` | List recent Drive changes |
+| `drive_activity_deleted` | List trashed files |
+| `drive_activity_history` | Query Drive Activity API |
+| `drive_delete` | Move file to trash |
+| `drive_rename` | Rename a file |
+| `drive_move` | Move file to folder |
+| `drive_copy` | Copy a file |
+| `drive_folder_create` | Create a folder |
+| `drive_permissions_list` | List file permissions |
+| `drive_permissions_update` | Add/remove permissions |
+| `drive_create_upload_url` | Get resumable upload URL |
+
+### Configuration
+
+| Flag | Environment Variable | Default | Description |
+|------|---------------------|---------|-------------|
+| `--port` | `PORT` | 8080 | Server port |
+| `--host` | `HOST` | 0.0.0.0 | Server host |
+| `--base-url` | `BASE_URL` | http://localhost:{port} | External base URL |
+| `--secret-name` | `SECRET_NAME` | - | GCP Secret Manager secret name |
+| `--secret-project` | `SECRET_PROJECT` | - | GCP project ID for Secret Manager |
+| `--credential-file` | `CREDENTIAL_FILE` | - | Local OAuth credentials file |
+
+### OAuth2 Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | Health check (no auth) |
+| `GET /.well-known/oauth-protected-resource` | Resource metadata |
+| `GET /.well-known/oauth-authorization-server` | Server metadata |
+| `POST /oauth/register` | Dynamic client registration |
+| `GET /oauth/authorize` | Start authorization flow |
+| `POST /oauth/token` | Token exchange |
+
+### Deployment to Cloud Run
+
+```bash
+# First time: bootstrap infrastructure
+make init-plan          # Review what will be created
+make init-deploy        # Deploy state backend, service accounts, APIs
+
+# Add OAuth credentials to Secret Manager
+gcloud secrets versions add scm-pwd-gdrive-oauth-creds \
+  --data-file=credentials.json \
+  --project=<project-id>
+
+# Deploy application
+make plan               # Review infrastructure changes
+make deploy             # Build Docker image, push, deploy Cloud Run
+
+# Custom domain: drive.mcp.scm-platform.org
+# Configure NS records at domain registrar (see terraform output)
+```
 
 ## Error Handling
 

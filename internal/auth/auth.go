@@ -1,4 +1,7 @@
 // Package auth provides OAuth2 authentication for Google Drive API.
+// Supports two modes:
+//   - CLI mode: credentials and tokens from local files
+//   - MCP mode: OAuth config and access token injected via context
 package auth
 
 import (
@@ -17,6 +20,14 @@ import (
 	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/driveactivity/v2"
 	"google.golang.org/api/option"
+)
+
+// Context keys for MCP mode token injection.
+type contextKey string
+
+const (
+	ctxKeyOAuthConfig contextKey = "oauth_config"
+	ctxKeyAccessToken contextKey = "access_token"
 )
 
 const (
@@ -232,8 +243,58 @@ func LoadToken(path string) (*oauth2.Token, error) {
 	return tok, err
 }
 
+// WithOAuthConfig injects an OAuth2 config into the context (MCP mode).
+func WithOAuthConfig(ctx context.Context, config *oauth2.Config) context.Context {
+	return context.WithValue(ctx, ctxKeyOAuthConfig, config)
+}
+
+// GetOAuthConfigFromContext retrieves the OAuth2 config from context.
+func GetOAuthConfigFromContext(ctx context.Context) (*oauth2.Config, bool) {
+	config, ok := ctx.Value(ctxKeyOAuthConfig).(*oauth2.Config)
+	return config, ok
+}
+
+// WithAccessToken injects an OAuth2 token into the context (MCP mode).
+func WithAccessToken(ctx context.Context, token *oauth2.Token) context.Context {
+	return context.WithValue(ctx, ctxKeyAccessToken, token)
+}
+
+// GetAccessTokenFromContext retrieves the OAuth2 token from context.
+func GetAccessTokenFromContext(ctx context.Context) (*oauth2.Token, bool) {
+	token, ok := ctx.Value(ctxKeyAccessToken).(*oauth2.Token)
+	return token, ok
+}
+
+// GetClientFromContext creates an HTTP client from context-injected credentials.
+// Returns nil if no credentials are in the context.
+func GetClientFromContext(ctx context.Context) *http.Client {
+	config, hasConfig := GetOAuthConfigFromContext(ctx)
+	token, hasToken := GetAccessTokenFromContext(ctx)
+	if hasConfig && hasToken {
+		return config.Client(ctx, token)
+	}
+	return nil
+}
+
 // GetAuthenticatedService returns an authenticated Drive service.
+// In MCP mode (context has OAuth config + token), uses context credentials.
+// In CLI mode, uses file-based credentials.
 func GetAuthenticatedService(cfg *Config) (*drive.Service, error) {
+	return GetAuthenticatedServiceWithContext(context.Background(), cfg)
+}
+
+// GetAuthenticatedServiceWithContext returns an authenticated Drive service using context.
+func GetAuthenticatedServiceWithContext(ctx context.Context, cfg *Config) (*drive.Service, error) {
+	// MCP mode: check context for injected credentials
+	if client := GetClientFromContext(ctx); client != nil {
+		srv, err := drive.NewService(ctx, option.WithHTTPClient(client))
+		if err != nil {
+			return nil, fmt.Errorf("unable to create Drive client: %v", err)
+		}
+		return srv, nil
+	}
+
+	// CLI mode: file-based credentials
 	credPath, err := cfg.GetCredentialsPath()
 	if err != nil {
 		return nil, err
@@ -262,8 +323,8 @@ func GetAuthenticatedService(cfg *Config) (*drive.Service, error) {
 		}
 	}
 
-	client := config.Client(context.Background(), tok)
-	srv, err := drive.New(client)
+	client := config.Client(ctx, tok)
+	srv, err := drive.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
 		return nil, fmt.Errorf("unable to create Drive client: %v", err)
 	}
@@ -273,6 +334,21 @@ func GetAuthenticatedService(cfg *Config) (*drive.Service, error) {
 
 // GetAuthenticatedActivityService returns an authenticated Drive Activity service.
 func GetAuthenticatedActivityService(cfg *Config) (*driveactivity.Service, error) {
+	return GetAuthenticatedActivityServiceWithContext(context.Background(), cfg)
+}
+
+// GetAuthenticatedActivityServiceWithContext returns an authenticated Drive Activity service using context.
+func GetAuthenticatedActivityServiceWithContext(ctx context.Context, cfg *Config) (*driveactivity.Service, error) {
+	// MCP mode: check context for injected credentials
+	if client := GetClientFromContext(ctx); client != nil {
+		srv, err := driveactivity.NewService(ctx, option.WithHTTPClient(client))
+		if err != nil {
+			return nil, fmt.Errorf("unable to create Drive Activity client: %v", err)
+		}
+		return srv, nil
+	}
+
+	// CLI mode: file-based credentials
 	credPath, err := cfg.GetCredentialsPath()
 	if err != nil {
 		return nil, err
@@ -301,8 +377,8 @@ func GetAuthenticatedActivityService(cfg *Config) (*driveactivity.Service, error
 		}
 	}
 
-	client := config.Client(context.Background(), tok)
-	srv, err := driveactivity.NewService(context.Background(), option.WithHTTPClient(client))
+	client := config.Client(ctx, tok)
+	srv, err := driveactivity.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
 		return nil, fmt.Errorf("unable to create Drive Activity client: %v", err)
 	}

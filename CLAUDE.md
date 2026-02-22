@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-A high-performance command-line tool for Google Drive operations, built in Go. Provides comprehensive file and folder management with parallel downloads, progress tracking, smart path resolution, and flexible configuration management.
+A high-performance command-line tool and MCP server for Google Drive operations, built in Go. Provides comprehensive file and folder management with parallel downloads, progress tracking, smart path resolution, and flexible configuration management. Includes an MCP HTTP Streamable server that exposes all Drive operations as 20 tools for AI agents.
 
 ## Project Structure
 
@@ -10,24 +10,20 @@ This project follows the **Standard Go Project Layout**:
 
 ```
 gdrive/
-├── cmd/
-│   └── gdrive/
-│       └── main.go           # Minimal entry point
+├── cmd/gdrive/main.go        # Minimal entry point
 ├── internal/
-│   ├── auth/
-│   │   ├── auth.go           # OAuth2 authentication
-│   │   └── auth_test.go      # Authentication tests
-│   ├── cli/
-│   │   └── cli.go            # CLI commands implementation
-│   └── drive/
-│       ├── service.go        # Drive API operations
-│       └── activity.go       # Activity tracking functionality
-├── bin/                      # Built binaries (gitignored)
-├── go.mod                    # Go module definition (at root)
-├── go.sum                    # Dependency checksums
-├── Makefile                  # Build automation
-├── CLAUDE.md                 # This file
-└── README.md                 # User documentation
+│   ├── auth/                  # OAuth2 authentication (CLI + MCP context injection)
+│   ├── cli/                   # CLI commands (file, folder, search, activity, mcp)
+│   ├── drive/                 # Drive API operations (service.go, activity.go)
+│   └── mcp/                   # MCP server (server.go, oauth2.go, tools.go)
+├── init/                      # Terraform: state backend, service accounts, APIs
+├── iac/                       # Terraform: Cloud Run, DNS, Docker, secrets
+├── .agent_docs/               # Detailed documentation (loaded on demand)
+├── config.yaml                # Infrastructure single source of truth
+├── Dockerfile                 # Multi-stage Go build for Cloud Run
+├── Makefile                   # Build + infrastructure automation
+├── CLAUDE.md                  # This file
+└── README.md                  # User documentation
 ```
 
 **Note:** This project does NOT use a `src/` directory, following Go best practices.
@@ -37,14 +33,11 @@ gdrive/
 ### Core Components
 
 1. **internal/auth/auth.go** - Authentication module
-   - Handles OAuth2 flow with Google Drive API
-   - Manages credential storage with configurable paths
+   - Handles OAuth2 flow with Google Drive API (CLI mode)
+   - Context-based token injection for MCP mode (`WithOAuthConfig`, `WithAccessToken`)
    - Configuration priority: CLI flags > Environment variables > Defaults
-   - Uses JSON for token persistence
-   - Local HTTP server for OAuth callback (port 8080)
-   - `Config` struct: Holds configurable paths for credentials and config directory
-   - `NewConfig()`: Creates Config with priority resolution
-   - Environment variables: `GDRIVE_CONFIG_DIR`, `GDRIVE_CREDENTIALS_PATH`
+   - `GetAuthenticatedServiceWithContext(ctx)` for per-request MCP auth
+   - See `.agent_docs/authentication.md` for full details
 
 2. **internal/drive/service.go** - Drive operations service
    - `Service` struct encapsulates all Drive API interactions
@@ -72,8 +65,33 @@ gdrive/
 5. **cmd/gdrive/main.go** - Minimal entry point
    - Creates root Cobra command
    - Calls `cli.SetupRootCommand()` for global configuration
-   - Adds subcommands via constructor functions
+   - Adds subcommands via constructor functions (file, folder, search, activity, mcp)
    - Handles execution and error output
+
+6. **internal/mcp/server.go** - MCP HTTP Streamable server
+   - HTTP mux with health, OAuth2, and MCP endpoints
+   - Auth middleware enforces Bearer token with WWW-Authenticate headers
+   - `httpContextFunc` injects auth context from HTTP request into MCP context
+   - Graceful shutdown on SIGINT/SIGTERM
+   - Structured logging via `slog` (JSON in prd, text otherwise)
+
+7. **internal/mcp/oauth2.go** - OAuth2 authorization server
+   - RFC 8414/9728/7591 compliant with PKCE S256
+   - Proxies to Google OAuth for user authentication
+   - Dynamic client registration, in-memory state stores
+   - Credential loading: Secret Manager → local file fallback
+   - See `.agent_docs/authentication.md` for full flow
+
+8. **internal/mcp/tools.go** - 20 MCP tools for Google Drive
+   - 9 read tools + 8 write tools + ping
+   - All tools use ID-only parameters (no path resolution)
+   - Signed URLs for file transfers
+   - See `.agent_docs/mcp-server.md` for full tool reference
+
+9. **Infrastructure** (init/, iac/, config.yaml, Dockerfile)
+   - Three-phase Terraform deployment to Cloud Run
+   - Custom domain: `drive.mcp.scm-platform.org`
+   - See `.agent_docs/terraform.md` for full details
 
 ### Key Design Patterns
 
@@ -324,11 +342,25 @@ make fmt
 make vet
 ```
 
+### MCP Server
+
+```bash
+# Start locally
+gdrive mcp --port 8080 --credential-file credentials.json
+
+# Deploy to Cloud Run
+make init-plan && make init-deploy    # First time: bootstrap
+make plan && make deploy              # Deploy application
+```
+
 ### Dependencies
 All dependencies are declared in `go.mod` (at project root):
 - `github.com/fatih/color` - Terminal colors
 - `github.com/schollz/progressbar/v3` - Progress bars
 - `github.com/spf13/cobra` - CLI framework
+- `github.com/mark3labs/mcp-go` - MCP SDK (HTTP Streamable)
+- `github.com/google/uuid` - UUID generation
+- `cloud.google.com/go/secretmanager` - GCP Secret Manager
 - `golang.org/x/oauth2` - OAuth2 authentication
 - `google.golang.org/api` - Google API client
 
@@ -513,6 +545,18 @@ golangci-lint run  # if installed
 | Permissions management | ✅ | Complete access control |
 | Shared Drives support | ✅ | SupportsAllDrives enabled |
 | OAuth2 via browser | ✅ | Local server callback |
+| MCP HTTP Streamable | ✅ | 20 tools for AI agents |
+| MCP OAuth2 server | ✅ | RFC 8414/9728/7591 + PKCE S256 |
+| Cloud Run deployment | ✅ | Terraform-managed infrastructure |
+| Custom domain | ✅ | drive.mcp.scm-platform.org |
+
+## Detailed Documentation (.agent_docs/)
+
+| File | Topic |
+|------|-------|
+| `.agent_docs/mcp-server.md` | MCP server architecture, all 20 tools, configuration |
+| `.agent_docs/terraform.md` | Infrastructure, deployment workflow, GCP resources |
+| `.agent_docs/authentication.md` | OAuth2 flow (CLI + MCP), context injection, endpoints |
 
 ## Related Documentation
 
