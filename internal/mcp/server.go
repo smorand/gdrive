@@ -61,8 +61,10 @@ func NewServer(cfg *ServerConfig) (*Server, error) {
 		oauth2:    oauth2Srv,
 	}
 
-	// Register ping tool
+	// Register tools
 	s.registerPingTool()
+	RegisterReadTools(s)
+	RegisterWriteTools(s)
 
 	return s, nil
 }
