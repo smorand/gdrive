@@ -1,9 +1,8 @@
-# Cloud DNS: Managed zone and records for custom domain mapping
+# Cloud DNS: CNAME record for custom domain mapping
 # This file contains DNS resources for drive.mcp.scm-platform.org
 #
-# Resources:
-# - Cloud DNS managed zone for scm-platform.org
-# - CNAME record for drive.mcp.scm-platform.org -> ghs.googlehosted.com
+# The DNS zone (scm-platform-org) is shared across MCP servers
+# and already exists in the project. We reference it via data source.
 
 # ============================================
 # LOCALS
@@ -15,21 +14,12 @@ locals {
 }
 
 # ============================================
-# CLOUD DNS MANAGED ZONE
+# DATA SOURCE: EXISTING DNS ZONE
 # ============================================
 
-# Note: If this zone already exists (shared across multiple MCP servers),
-# import it with: terraform import google_dns_managed_zone.mcp_zone scm-platform-org
-resource "google_dns_managed_zone" "mcp_zone" {
-  name     = local.dns_zone_name
-  dns_name = local.dns_name
-
-  description = "DNS zone for MCP servers on scm-platform.org"
-
-  labels = {
-    environment = local.env
-    managed_by  = "terraform"
-  }
+data "google_dns_managed_zone" "scm_platform" {
+  name    = local.dns_zone_name
+  project = local.project_id
 }
 
 # ============================================
@@ -39,8 +29,8 @@ resource "google_dns_managed_zone" "mcp_zone" {
 # CNAME record for Cloud Run domain mapping
 # drive.mcp.scm-platform.org -> ghs.googlehosted.com
 resource "google_dns_record_set" "mcp_cname" {
-  name         = "${local.dns_subdomain}.${local.dns_name}"
-  managed_zone = google_dns_managed_zone.mcp_zone.name
+  name         = "${local.dns_subdomain}.${data.google_dns_managed_zone.scm_platform.dns_name}"
+  managed_zone = data.google_dns_managed_zone.scm_platform.name
   type         = "CNAME"
   ttl          = 300
 
@@ -51,12 +41,7 @@ resource "google_dns_record_set" "mcp_cname" {
 # OUTPUTS
 # ============================================
 
-output "dns_zone_name_servers" {
-  description = "Name servers for the DNS zone (configure at domain registrar)"
-  value       = google_dns_managed_zone.mcp_zone.name_servers
-}
-
 output "dns_cname_record" {
   description = "CNAME record for the MCP server"
-  value       = "${local.dns_subdomain}.${trimsuffix(local.dns_name, ".")} -> ghs.googlehosted.com"
+  value       = "${local.dns_subdomain}.${trimsuffix(data.google_dns_managed_zone.scm_platform.dns_name, ".")} -> ghs.googlehosted.com"
 }
