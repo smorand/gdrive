@@ -1,9 +1,12 @@
 package auth
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"golang.org/x/oauth2"
 )
 
 func TestConfigPriority(t *testing.T) {
@@ -158,6 +161,77 @@ func TestConfigIntegration(t *testing.T) {
 
 		if tokenPath != expected {
 			t.Errorf("Expected token path=%s, got %s", expected, tokenPath)
+		}
+	})
+}
+
+func TestContextInjection(t *testing.T) {
+	t.Run("WithOAuthConfig and GetOAuthConfigFromContext round-trip", func(t *testing.T) {
+		config := &oauth2.Config{
+			ClientID:     "test-client-id",
+			ClientSecret: "test-secret",
+		}
+
+		ctx := WithOAuthConfig(context.Background(), config)
+		got, ok := GetOAuthConfigFromContext(ctx)
+		if !ok {
+			t.Fatal("expected to find OAuth config in context")
+		}
+		if got.ClientID != config.ClientID {
+			t.Errorf("ClientID = %q, want %q", got.ClientID, config.ClientID)
+		}
+	})
+
+	t.Run("GetOAuthConfigFromContext returns false when missing", func(t *testing.T) {
+		_, ok := GetOAuthConfigFromContext(context.Background())
+		if ok {
+			t.Error("expected ok=false for empty context")
+		}
+	})
+
+	t.Run("WithAccessToken and GetAccessTokenFromContext round-trip", func(t *testing.T) {
+		token := &oauth2.Token{AccessToken: "test-access-token"}
+
+		ctx := WithAccessToken(context.Background(), token)
+		got, ok := GetAccessTokenFromContext(ctx)
+		if !ok {
+			t.Fatal("expected to find access token in context")
+		}
+		if got.AccessToken != token.AccessToken {
+			t.Errorf("AccessToken = %q, want %q", got.AccessToken, token.AccessToken)
+		}
+	})
+
+	t.Run("GetAccessTokenFromContext returns false when missing", func(t *testing.T) {
+		_, ok := GetAccessTokenFromContext(context.Background())
+		if ok {
+			t.Error("expected ok=false for empty context")
+		}
+	})
+
+	t.Run("GetClientFromContext returns nil when no credentials", func(t *testing.T) {
+		client := GetClientFromContext(context.Background())
+		if client != nil {
+			t.Error("expected nil client for empty context")
+		}
+	})
+
+	t.Run("GetClientFromContext returns client when both config and token present", func(t *testing.T) {
+		config := &oauth2.Config{
+			ClientID:     "test-client",
+			ClientSecret: "test-secret",
+			Endpoint: oauth2.Endpoint{
+				TokenURL: "https://example.com/token",
+			},
+		}
+		token := &oauth2.Token{AccessToken: "test-token"}
+
+		ctx := WithOAuthConfig(context.Background(), config)
+		ctx = WithAccessToken(ctx, token)
+
+		client := GetClientFromContext(ctx)
+		if client == nil {
+			t.Fatal("expected non-nil client when both config and token are present")
 		}
 	})
 }
