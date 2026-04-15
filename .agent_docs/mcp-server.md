@@ -2,7 +2,7 @@
 
 ## Overview
 
-The MCP (Model Context Protocol) HTTP Streamable server exposes Google Drive operations as 20 MCP tools for AI agents. It runs as a `gdrive mcp` subcommand and deploys to Cloud Run.
+The MCP (Model Context Protocol) HTTP Streamable server exposes Google Drive operations as 21 MCP tools for AI agents. It runs as a `gdrive mcp` subcommand and deploys to Cloud Run.
 
 ## Architecture
 
@@ -20,7 +20,7 @@ Client (AI Agent)
 │  ├── POST /oauth/token                  │
 │  └── /mcp (auth middleware)             │
 │       └── StreamableHTTP Server         │
-│            └── MCP Tools (20)           │
+│            └── MCP Tools (21)           │
 └─────────────────────────────────────────┘
 ```
 
@@ -28,10 +28,10 @@ Client (AI Agent)
 
 - `internal/mcp/server.go` - Server core, HTTP mux, auth middleware, health endpoint
 - `internal/mcp/oauth2.go` - OAuth2 authorization server (RFC 8414/9728/7591, PKCE S256)
-- `internal/mcp/tools.go` - All 20 MCP tools (read + write)
+- `internal/mcp/tools.go` - All 21 MCP tools (read + write)
 - `internal/cli/mcp.go` - Cobra CLI subcommand
 
-## MCP Tools (20 total)
+## MCP Tools (21 total)
 
 ### Read Tools (registered via `RegisterReadTools`)
 
@@ -46,6 +46,9 @@ Client (AI Agent)
 | `drive_activity_deleted` | List trashed files | `daysBack`, `maxResults` |
 | `drive_activity_history` | Query Drive Activity API | `daysBack`, `maxResults` (cap 200) |
 | `drive_file_revisions` | List file revision history | `fileId` |
+| `drive_read_content` | Read file content as text | `fileId` |
+| `drive_list_recent` | List recent files with sort/pagination | `orderBy`, `pageSize`, `pageToken` |
+| `drive_download_content` | Download raw content as base64 | `fileId`, `exportMimeType` |
 
 ### Write Tools (registered via `RegisterWriteTools`)
 
@@ -62,13 +65,45 @@ Client (AI Agent)
 
 Plus `ping` (registered in server.go).
 
+## New Tools Details
+
+### drive_read_content
+
+Reads file content as text. For Google Workspace files (Docs, Sheets, Slides), exports to text-friendly formats (plain text, CSV). For regular text files, returns content directly. Content capped at 1MB.
+
+**Response**: `{ fileId, mimeType, content, truncated }`
+
+Export mapping:
+- Google Docs → text/plain
+- Google Sheets → text/csv
+- Google Slides → text/plain
+
+### drive_list_recent
+
+Lists recent files sorted by specified order with pagination support.
+
+**Parameters**:
+- `orderBy`: `"recency"` (default), `"lastModified"`, or `"lastModifiedByMe"`
+- `pageSize`: max files per page (default: 10)
+- `pageToken`: pagination token from previous response
+
+**Response**: `{ files: [...], nextPageToken }`
+
+### drive_download_content
+
+Downloads raw binary content as base64-encoded string. For Google Workspace files, `exportMimeType` determines the output format (defaults to `text/plain`).
+
+**Response**: `{ fileId, mimeType, data (base64), size }`
+
 ## Key Design Decisions
 
 - **ID-only parameters**: All tools use Google Drive IDs, no path resolution
-- **Signed URLs**: File transfers return URLs instead of streaming content
+- **Signed URLs**: `drive_download_url`, `drive_export_url`, `drive_create_upload_url` return URLs with embedded access tokens
+- **Direct content**: `drive_read_content` and `drive_download_content` return content directly (text or base64)
 - **Soft delete only**: `drive_delete` trashes files, no permanent deletion
 - **Per-request auth**: Each request creates its own Drive client from context-injected token
 - **Activity cap**: `drive_activity_history` hard caps at 200 results to prevent Cloud Run timeout
+- **Content cap**: `drive_read_content` caps at 1MB to prevent memory issues
 
 ## Auth Flow
 
@@ -91,7 +126,16 @@ Plus `ping` (registered in server.go).
 | `--base-url` | `BASE_URL` | http://localhost:{port} | External base URL |
 | `--secret-name` | `SECRET_NAME` | - | GCP Secret Manager secret name |
 | `--secret-project` | `SECRET_PROJECT` | - | GCP project ID |
+| `--vault-addr` | `VAULT_ADDR` | - | HashiCorp Vault address |
+| `--vault-token` | `VAULT_TOKEN` | - | Vault authentication token |
+| `--vault-secret-path` | `VAULT_SECRET_PATH` | - | Vault KV v2 secret path |
 | `--credential-file` | `CREDENTIAL_FILE` | - | Local OAuth credentials file |
+
+### Credential Loading Priority
+
+1. **GCP Secret Manager** (Cloud Run): `SECRET_NAME` + `SECRET_PROJECT`
+2. **HashiCorp Vault** (VPS): `VAULT_ADDR` + `VAULT_TOKEN` + `VAULT_SECRET_PATH`
+3. **Local file**: `CREDENTIAL_FILE` or `credentials.json` / `google_credentials.json`
 
 ### Logging
 
@@ -101,8 +145,16 @@ Plus `ping` (registered in server.go).
 
 ## Helper Functions in tools.go
 
-- `getDriveService(ctx)` - Creates authenticated Drive service from context
-- `getActivityService(ctx)` - Creates authenticated Activity service from context
+- `getDriveService(ctx)` - Creates authenticated Drive service from context (overridable for tests)
+- `getActivityService(ctx)` - Creates authenticated Activity service from context (overridable for tests)
 - `toolResult(data)` - JSON-marshals data into MCP CallToolResult
 - `logToolCall(name, start, result, err)` - Logs tool execution with duration
 - `detectMimeType(filename)` - Auto-detects MIME type from file extension
+
+## Testing
+
+E2E tests use a mock Google Drive API server (`mock_drive_test.go`) with:
+- `driveServiceOverride` / `activityServiceOverride` for dependency injection
+- `httptest.Server` simulating Drive API endpoints
+- `option.WithEndpoint()` + `option.WithoutAuthentication()` redirecting API calls to mock
+- JSON-RPC `tools/call` messages via `HandleMessage()` for tool invocation

@@ -1,0 +1,22 @@
+services:
+  gdrive:
+    build: .
+    container_name: gdrive
+    restart: unless-stopped
+    expose:
+      - "8080"
+    volumes:
+      - /app/data/gdrive:/data
+    env_file:
+      - /app/data/gdrive/.env
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    networks:
+      - proxy-network
+
+networks:
+  proxy-network:
+    external: true

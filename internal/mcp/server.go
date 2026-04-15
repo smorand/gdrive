@@ -19,12 +19,15 @@ import (
 
 // ServerConfig holds the MCP server configuration.
 type ServerConfig struct {
-	Host           string
-	Port           int
-	BaseURL        string
-	SecretName     string
-	SecretProject  string
-	CredentialFile string
+	Host            string
+	Port            int
+	BaseURL         string
+	SecretName      string
+	SecretProject   string
+	VaultAddr       string
+	VaultToken      string
+	VaultSecretPath string
+	CredentialFile  string
 }
 
 // Server is the MCP HTTP Streamable server for Google Drive.
@@ -40,7 +43,7 @@ func NewServer(cfg *ServerConfig) (*Server, error) {
 	setupLogging()
 
 	// Load OAuth credentials
-	creds, err := LoadOAuthCredentials(cfg.SecretName, cfg.SecretProject, cfg.CredentialFile)
+	creds, err := LoadOAuthCredentials(cfg.SecretName, cfg.SecretProject, cfg.VaultAddr, cfg.VaultToken, cfg.VaultSecretPath, cfg.CredentialFile)
 	if err != nil {
 		return nil, fmt.Errorf("load OAuth credentials: %w", err)
 	}

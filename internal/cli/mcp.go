@@ -13,12 +13,15 @@ import (
 // MCPCmd returns the MCP server command.
 func MCPCmd() *cobra.Command {
 	var (
-		port           int
-		host           string
-		baseURL        string
-		secretName     string
-		secretProject  string
-		credentialFile string
+		port            int
+		host            string
+		baseURL         string
+		secretName      string
+		secretProject   string
+		vaultAddr       string
+		vaultToken      string
+		vaultSecretPath string
+		credentialFile  string
 	)
 
 	cmd := &cobra.Command{
@@ -60,17 +63,31 @@ func MCPCmd() *cobra.Command {
 				}
 			}
 
+			// Vault config from env vars (VPS deployment)
+			if vaultAddr == "" {
+				vaultAddr = os.Getenv("VAULT_ADDR")
+			}
+			if vaultToken == "" {
+				vaultToken = os.Getenv("VAULT_TOKEN")
+			}
+			if vaultSecretPath == "" {
+				vaultSecretPath = os.Getenv("VAULT_SECRET_PATH")
+			}
+
 			if baseURL == "" {
 				baseURL = fmt.Sprintf("http://localhost:%d", port)
 			}
 
 			cfg := &mcp.ServerConfig{
-				Host:           host,
-				Port:           port,
-				BaseURL:        baseURL,
-				SecretName:     secretName,
-				SecretProject:  secretProject,
-				CredentialFile: credentialFile,
+				Host:            host,
+				Port:            port,
+				BaseURL:         baseURL,
+				SecretName:      secretName,
+				SecretProject:   secretProject,
+				VaultAddr:       vaultAddr,
+				VaultToken:      vaultToken,
+				VaultSecretPath: vaultSecretPath,
+				CredentialFile:  credentialFile,
 			}
 
 			srv, err := mcp.NewServer(cfg)
@@ -88,6 +105,9 @@ func MCPCmd() *cobra.Command {
 	cmd.Flags().StringVar(&secretName, "secret-name", "", "GCP Secret Manager secret name (env: SECRET_NAME)")
 	cmd.Flags().StringVar(&secretProject, "secret-project", "", "GCP project ID for Secret Manager (env: SECRET_PROJECT)")
 	cmd.Flags().StringVar(&credentialFile, "credential-file", "", "Path to local OAuth credentials file (env: CREDENTIAL_FILE)")
+	cmd.Flags().StringVar(&vaultAddr, "vault-addr", "", "HashiCorp Vault address (env: VAULT_ADDR)")
+	cmd.Flags().StringVar(&vaultToken, "vault-token", "", "HashiCorp Vault token (env: VAULT_TOKEN)")
+	cmd.Flags().StringVar(&vaultSecretPath, "vault-secret-path", "", "Vault secret path (env: VAULT_SECRET_PATH)")
 
 	return cmd
 }
