@@ -68,6 +68,13 @@ var MIMETypeMappings = map[string][]string{
 	"folder": {"application/vnd.google-apps.folder"},
 }
 
+// TextExportFormats maps Google Workspace MIME types to text-friendly export MIME types.
+var TextExportFormats = map[string]string{
+	"application/vnd.google-apps.document":     "text/plain",
+	"application/vnd.google-apps.spreadsheet":  "text/csv",
+	"application/vnd.google-apps.presentation": "text/plain",
+}
+
 // ExportFormats maps Google Workspace MIME types to export formats.
 var ExportFormats = map[string]map[string]string{
 	"application/vnd.google-apps.document": {
@@ -676,4 +683,116 @@ func (ds *Service) AdjustFilename(localPath, exportFormat string) string {
 
 	// Add new extension
 	return baseName + "." + exportFormat
+}
+
+const maxReadContentSize = 1 << 20 // 1MB
+
+// ReadFileContent reads file content as text from Google Drive.
+// For Google Workspace files, exports to text-friendly formats.
+// Content is capped at 1MB to avoid memory issues.
+func (ds *Service) ReadFileContent(fileID string) (content string, mimeType string, truncated bool, err error) {
+	file, err := ds.API.Files.Get(fileID).
+		Fields("id, name, mimeType, size").
+		SupportsAllDrives(true).Do()
+	if err != nil {
+		return "", "", false, err
+	}
+
+	mimeType = file.MimeType
+
+	var resp *http.Response
+	if exportMime, ok := TextExportFormats[file.MimeType]; ok {
+		resp, err = ds.API.Files.Export(fileID, exportMime).Download()
+	} else {
+		resp, err = ds.API.Files.Get(fileID).Download()
+	}
+	if err != nil {
+		return "", mimeType, false, fmt.Errorf("download failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	limited := io.LimitReader(resp.Body, maxReadContentSize+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return "", mimeType, false, fmt.Errorf("read failed: %w", err)
+	}
+
+	truncated = len(data) > maxReadContentSize
+	if truncated {
+		data = data[:maxReadContentSize]
+	}
+
+	return string(data), mimeType, truncated, nil
+}
+
+// ListRecentFiles lists recent files sorted by the specified order.
+// Valid orderBy values: "recency", "lastModified", "lastModifiedByMe", or "" (defaults to recency).
+func (ds *Service) ListRecentFiles(orderBy string, pageSize int64, pageToken string) ([]*drive.File, string, error) {
+	orderMap := map[string]string{
+		"recency":          "recency desc",
+		"lastModified":     "modifiedTime desc",
+		"lastModifiedByMe": "modifiedByMeTime desc",
+		"":                 "recency desc",
+	}
+
+	apiOrder, ok := orderMap[orderBy]
+	if !ok {
+		return nil, "", fmt.Errorf("invalid orderBy value: %q (valid: recency, lastModified, lastModifiedByMe)", orderBy)
+	}
+
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+
+	call := ds.API.Files.List().
+		Q("trashed = false").
+		OrderBy(apiOrder).
+		PageSize(pageSize).
+		Fields("nextPageToken, files(id, name, mimeType, modifiedTime, size, owners, webViewLink)")
+
+	if pageToken != "" {
+		call = call.PageToken(pageToken)
+	}
+
+	result, err := call.Do()
+	if err != nil {
+		return nil, "", err
+	}
+
+	return result.Files, result.NextPageToken, nil
+}
+
+// DownloadFileContent downloads raw binary content of a file.
+// For Google Workspace files, exportMimeType determines the export format (defaults to text/plain).
+func (ds *Service) DownloadFileContent(fileID string, exportMimeType string) ([]byte, string, error) {
+	file, err := ds.API.Files.Get(fileID).
+		Fields("id, name, mimeType, size").
+		SupportsAllDrives(true).Do()
+	if err != nil {
+		return nil, "", err
+	}
+
+	var resp *http.Response
+	effectiveMime := file.MimeType
+
+	if ds.IsGoogleWorkspaceFile(file) {
+		if exportMimeType == "" {
+			exportMimeType = "text/plain"
+		}
+		effectiveMime = exportMimeType
+		resp, err = ds.API.Files.Export(fileID, exportMimeType).Download()
+	} else {
+		resp, err = ds.API.Files.Get(fileID).Download()
+	}
+	if err != nil {
+		return nil, effectiveMime, fmt.Errorf("download failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, effectiveMime, fmt.Errorf("read failed: %w", err)
+	}
+
+	return data, effectiveMime, nil
 }

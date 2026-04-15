@@ -17,7 +17,7 @@ A command-line tool and MCP server for Google Drive operations, built in Go for 
 - 🔐 **Permissions Management**: Share files, manage permissions, control access
 - 📦 **Google Workspace Export**: Automatic export to standard formats (PDF, DOCX, XLSX, PPTX)
 - 📜 **Activity Tracking**: View recent changes and file revision history
-- 🤖 **MCP Server**: HTTP Streamable server exposing 20 Drive tools for AI agents
+- 🤖 **MCP Server**: HTTP Streamable server exposing 21 Drive tools for AI agents
 - 🔑 **OAuth2 Server**: RFC-compliant authorization with PKCE S256 for MCP clients
 - ☁️ **Cloud Run**: Terraform-managed deployment with custom domain
 
@@ -414,7 +414,7 @@ gdrive mcp --port 8080 --credential-file credentials.json
 gdrive mcp --port 8080 --secret-name scm-pwd-gdrive-oauth-creds --secret-project my-project
 ```
 
-### Available Tools (20)
+### Available Tools (21)
 
 | Tool | Description |
 |------|-------------|
@@ -424,6 +424,9 @@ gdrive mcp --port 8080 --secret-name scm-pwd-gdrive-oauth-creds --secret-project
 | `drive_file_info` | Get file metadata with path |
 | `drive_download_url` | Get signed download URL |
 | `drive_export_url` | Export Workspace files (Docs/Sheets/Slides) |
+| `drive_read_content` | Read file content as text |
+| `drive_list_recent` | List recent files with sort/pagination |
+| `drive_download_content` | Download raw content as base64 |
 | `drive_file_revisions` | List file revision history |
 | `drive_activity_changes` | List recent Drive changes |
 | `drive_activity_deleted` | List trashed files |
@@ -446,6 +449,9 @@ gdrive mcp --port 8080 --secret-name scm-pwd-gdrive-oauth-creds --secret-project
 | `--base-url` | `BASE_URL` | http://localhost:{port} | External base URL |
 | `--secret-name` | `SECRET_NAME` | - | GCP Secret Manager secret name |
 | `--secret-project` | `SECRET_PROJECT` | - | GCP project ID for Secret Manager |
+| `--vault-addr` | `VAULT_ADDR` | - | HashiCorp Vault address |
+| `--vault-token` | `VAULT_TOKEN` | - | Vault authentication token |
+| `--vault-secret-path` | `VAULT_SECRET_PATH` | - | Vault KV v2 secret path |
 | `--credential-file` | `CREDENTIAL_FILE` | - | Local OAuth credentials file |
 
 ### OAuth2 Endpoints
@@ -477,6 +483,21 @@ make deploy             # Build Docker image, push, deploy Cloud Run
 
 # Custom domain: drive.mcp.scm-platform.org
 # Configure NS records at domain registrar (see terraform output)
+```
+
+### Deployment to VPS (with Vault)
+
+```bash
+# Store Google credentials in Vault
+vault kv put secret/credentials/google-credentials \
+  credentials=@credentials.json
+
+# Configure environment (see environments/prod/.env.example)
+# Deploy using latest git tag
+make deploy-vps
+
+# Or deploy a specific version
+make deploy-vps VPS_TAG=v1.2.0
 ```
 
 ## Error Handling

@@ -51,9 +51,10 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
 
 # Default command: start MCP server
-# Environment variables expected:
+# Environment variables:
 # - PORT (optional, defaults to 8080)
-# - SECRET_NAME (required for OAuth credentials from Secret Manager)
-# - SECRET_PROJECT (required for Secret Manager project)
 # - BASE_URL (required for OAuth redirect URLs)
+# Cloud Run: SECRET_NAME, SECRET_PROJECT (GCP Secret Manager)
+# VPS: VAULT_ADDR, VAULT_TOKEN, VAULT_SECRET_PATH (HashiCorp Vault)
+# Fallback: CREDENTIAL_FILE (local file path)
 ENTRYPOINT ["/app/gdrive", "mcp"]

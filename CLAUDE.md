@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-A high-performance command-line tool and MCP server for Google Drive operations, built in Go. Provides comprehensive file and folder management with parallel downloads, progress tracking, smart path resolution, and flexible configuration management. Includes an MCP HTTP Streamable server that exposes all Drive operations as 20 tools for AI agents.
+A high-performance command-line tool and MCP server for Google Drive operations, built in Go. Provides comprehensive file and folder management with parallel downloads, progress tracking, smart path resolution, and flexible configuration management. Includes an MCP HTTP Streamable server that exposes all Drive operations as 21 tools for AI agents.
 
 ## Project Structure
 
@@ -79,17 +79,18 @@ gdrive/
    - RFC 8414/9728/7591 compliant with PKCE S256
    - Proxies to Google OAuth for user authentication
    - Dynamic client registration, in-memory state stores
-   - Credential loading: Secret Manager → local file fallback
+   - Credential loading: Secret Manager → Vault → local file fallback
    - See `.agent_docs/authentication.md` for full flow
 
-8. **internal/mcp/tools.go** - 20 MCP tools for Google Drive
-   - 9 read tools + 8 write tools + ping
+8. **internal/mcp/tools.go** - 21 MCP tools for Google Drive
+   - 12 read tools + 8 write tools + ping
    - All tools use ID-only parameters (no path resolution)
-   - Signed URLs for file transfers
+   - Signed URLs for file transfers, direct content access for read/download
    - See `.agent_docs/mcp-server.md` for full tool reference
 
-9. **Infrastructure** (init/, iac/, config.yaml, Dockerfile)
-   - Three-phase Terraform deployment to Cloud Run
+9. **Infrastructure** (init/, iac/, config.yaml, Dockerfile, docker-compose.prod.yml)
+   - Cloud Run: Three-phase Terraform deployment
+   - VPS: docker-compose with Vault credential loading
    - Custom domain: `drive.mcp.scm-platform.org`
    - See `.agent_docs/terraform.md` for full details
 
@@ -351,6 +352,10 @@ gdrive mcp --port 8080 --credential-file credentials.json
 # Deploy to Cloud Run
 make init-plan && make init-deploy    # First time: bootstrap
 make plan && make deploy              # Deploy application
+
+# Deploy to VPS (with Vault)
+make deploy-vps                       # Uses latest git tag
+make deploy-vps VPS_TAG=v1.2.0       # Specific version
 ```
 
 ### Dependencies
@@ -545,7 +550,10 @@ golangci-lint run  # if installed
 | Permissions management | ✅ | Complete access control |
 | Shared Drives support | ✅ | SupportsAllDrives enabled |
 | OAuth2 via browser | ✅ | Local server callback |
-| MCP HTTP Streamable | ✅ | 20 tools for AI agents |
+| MCP read content | ✅ | Read file content as text |
+| MCP list recent | ✅ | List recent files with sort/pagination |
+| MCP download content | ✅ | Download raw content as base64 |
+| MCP HTTP Streamable | ✅ | 21 tools for AI agents |
 | MCP OAuth2 server | ✅ | RFC 8414/9728/7591 + PKCE S256 |
 | Cloud Run deployment | ✅ | Terraform-managed infrastructure |
 | Custom domain | ✅ | drive.mcp.scm-platform.org |

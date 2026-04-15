@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -27,6 +28,9 @@ func RegisterReadTools(s *Server) {
 	registerActivityDeletedTool(s)
 	registerActivityHistoryTool(s)
 	registerFileRevisionsTool(s)
+	registerReadContentTool(s)
+	registerListRecentTool(s)
+	registerDownloadContentTool(s)
 }
 
 // RegisterWriteTools registers all write MCP tools on the server.
@@ -41,8 +45,17 @@ func RegisterWriteTools(s *Server) {
 	registerCreateUploadURLTool(s)
 }
 
+// driveServiceOverride allows tests to inject a mock Drive service.
+var driveServiceOverride func(ctx context.Context) (*drive.Service, error)
+
+// activityServiceOverride allows tests to inject a mock Activity service.
+var activityServiceOverride func(ctx context.Context) (*driveactivity.Service, error)
+
 // getDriveService creates an authenticated Drive service from context.
 func getDriveService(ctx context.Context) (*drive.Service, error) {
+	if driveServiceOverride != nil {
+		return driveServiceOverride(ctx)
+	}
 	cfg := auth.NewConfig("", "")
 	srv, err := auth.GetAuthenticatedServiceWithContext(ctx, cfg)
 	if err != nil {
@@ -53,6 +66,9 @@ func getDriveService(ctx context.Context) (*drive.Service, error) {
 
 // getActivityService creates an authenticated Drive Activity service from context.
 func getActivityService(ctx context.Context) (*driveactivity.Service, error) {
+	if activityServiceOverride != nil {
+		return activityServiceOverride(ctx)
+	}
 	cfg := auth.NewConfig("", "")
 	srv, err := auth.GetAuthenticatedActivityServiceWithContext(ctx, cfg)
 	if err != nil {
@@ -913,6 +929,127 @@ func registerCreateUploadURLTool(s *Server) {
 
 		result, err := toolResult(data)
 		return logToolCall("drive_create_upload_url", start, result, err)
+	})
+}
+
+// --- New Read Tools ---
+
+func registerReadContentTool(s *Server) {
+	tool := mcp.NewTool("drive_read_content",
+		mcp.WithDescription("Read file content as text from Google Drive. Returns a text representation of the file. Supports Google Docs, Sheets, Slides, PDF, Office formats, and text files. Content may be truncated for very large files (>1MB)."),
+		mcp.WithString("fileId", mcp.Required(), mcp.Description("Google Drive file ID")),
+	)
+
+	s.mcpServer.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		start := time.Now()
+
+		fileID, _ := req.GetArguments()["fileId"].(string)
+
+		driveSrv, err := getDriveService(ctx)
+		if err != nil {
+			return logToolCall("drive_read_content", start, nil, err)
+		}
+
+		content, mimeType, truncated, err := driveSrv.ReadFileContent(fileID)
+		if err != nil {
+			return logToolCall("drive_read_content", start, nil, fmt.Errorf("read failed: %w", err))
+		}
+
+		data := map[string]interface{}{
+			"fileId":    fileID,
+			"mimeType":  mimeType,
+			"content":   content,
+			"truncated": truncated,
+		}
+
+		result, err := toolResult(data)
+		return logToolCall("drive_read_content", start, result, err)
+	})
+}
+
+func registerListRecentTool(s *Server) {
+	tool := mcp.NewTool("drive_list_recent",
+		mcp.WithDescription("List recent files from Google Drive sorted by specified order. Supports pagination."),
+		mcp.WithString("orderBy", mcp.Description("Sort order: 'recency' (default), 'lastModified', or 'lastModifiedByMe'")),
+		mcp.WithNumber("pageSize", mcp.Description("Maximum number of files to return (default: 10)")),
+		mcp.WithString("pageToken", mcp.Description("Page token for pagination from a previous response")),
+	)
+
+	s.mcpServer.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		start := time.Now()
+
+		orderBy, _ := req.GetArguments()["orderBy"].(string)
+		pageSize := int64(10)
+		if ps, ok := req.GetArguments()["pageSize"].(float64); ok && ps > 0 {
+			pageSize = int64(ps)
+		}
+		pageToken, _ := req.GetArguments()["pageToken"].(string)
+
+		driveSrv, err := getDriveService(ctx)
+		if err != nil {
+			return logToolCall("drive_list_recent", start, nil, err)
+		}
+
+		files, nextPageToken, err := driveSrv.ListRecentFiles(orderBy, pageSize, pageToken)
+		if err != nil {
+			return logToolCall("drive_list_recent", start, nil, fmt.Errorf("list failed: %w", err))
+		}
+
+		var fileList []map[string]interface{}
+		for _, f := range files {
+			fileList = append(fileList, map[string]interface{}{
+				"id":           f.Id,
+				"name":         f.Name,
+				"mimeType":     f.MimeType,
+				"modifiedTime": f.ModifiedTime,
+				"size":         f.Size,
+			})
+		}
+
+		data := map[string]interface{}{
+			"files":         fileList,
+			"nextPageToken": nextPageToken,
+		}
+
+		result, err := toolResult(data)
+		return logToolCall("drive_list_recent", start, result, err)
+	})
+}
+
+func registerDownloadContentTool(s *Server) {
+	tool := mcp.NewTool("drive_download_content",
+		mcp.WithDescription("Download raw binary content of a Google Drive file as base64. For Google Workspace files (Docs, Sheets, Slides), exportMimeType determines the output format (defaults to text/plain if not specified). For regular files, returns the raw content."),
+		mcp.WithString("fileId", mcp.Required(), mcp.Description("Google Drive file ID")),
+		mcp.WithString("exportMimeType", mcp.Description("For Google Workspace files: MIME type to export to (e.g., 'application/pdf', 'text/csv'). Ignored for non-Workspace files. Defaults to text/plain.")),
+	)
+
+	s.mcpServer.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		start := time.Now()
+
+		fileID, _ := req.GetArguments()["fileId"].(string)
+		exportMimeType, _ := req.GetArguments()["exportMimeType"].(string)
+
+		driveSrv, err := getDriveService(ctx)
+		if err != nil {
+			return logToolCall("drive_download_content", start, nil, err)
+		}
+
+		data, mimeType, err := driveSrv.DownloadFileContent(fileID, exportMimeType)
+		if err != nil {
+			return logToolCall("drive_download_content", start, nil, fmt.Errorf("download failed: %w", err))
+		}
+
+		encoded := base64.StdEncoding.EncodeToString(data)
+
+		resultData := map[string]interface{}{
+			"fileId":   fileID,
+			"mimeType": mimeType,
+			"data":     encoded,
+			"size":     len(data),
+		}
+
+		result, err := toolResult(resultData)
+		return logToolCall("drive_download_content", start, result, err)
 	})
 }
 

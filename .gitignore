@@ -44,6 +44,9 @@ init/terraform.tfstate*
 iac/.terraform/
 iac/.terraform.lock.hcl
 
+# Environment secrets (keep .env.example, exclude actual .env)
+environments/prod/.env
+
 # Conversation transcripts
 gdrive.txt
 .worktrees/

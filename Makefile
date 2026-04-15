@@ -1,4 +1,4 @@
-.PHONY: build build-all install uninstall clean clean-all rebuild test fmt vet check help
+.PHONY: build build-all install uninstall clean clean-all rebuild test fmt vet check help deploy-vps
 .PHONY: plan deploy undeploy init-plan init-deploy init-destroy terraform-help check-init update-backend configure-docker-auth
 
 # Binary name derived from current directory
@@ -205,7 +205,24 @@ check: fmt vet test
 	@echo "All checks passed!"
 
 # ============================================
-# Terraform targets
+# VPS deployment
+# ============================================
+
+VPS_HOST=root@31.97.54.67
+VPS_DOMAIN=drive.mcp.scm-platform.org
+VPS_PORT=8080
+VPS_TAG ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo "main")
+
+deploy-vps:
+	@echo "Deploying $(BINARY_NAME)@$(VPS_TAG) to VPS..."
+	@ssh $(VPS_HOST) "cd /app/vps-management && \
+		./scripts/vps-undeploy.sh $(BINARY_NAME) 2>/dev/null; \
+		LETSENCRYPT_EMAIL=seb.morand@gmail.com ./scripts/vps-deploy.sh smorand/$(BINARY_NAME)@$(VPS_TAG) prod $(VPS_DOMAIN):$(VPS_PORT) ./environments"
+	@echo ""
+	@echo "Verify: https://$(VPS_DOMAIN)/health"
+
+# ============================================
+# Terraform targets (Cloud Run)
 # ============================================
 
 # Check if init has been deployed (by checking if state backend exists)
@@ -355,7 +372,10 @@ help:
 	@echo "  info            - Show current platform information"
 	@echo "  help            - Show this help message"
 	@echo ""
-	@echo "Infrastructure targets:"
+	@echo "VPS deployment:"
+	@echo "  deploy-vps      - Deploy to VPS (uses latest tag, or VPS_TAG=v1.x.0)"
+	@echo ""
+	@echo "Cloud Run infrastructure:"
 	@echo "  init-plan       - Plan initialization resources"
 	@echo "  init-deploy     - Deploy initialization resources"
 	@echo "  init-destroy    - Destroy initialization (DANGEROUS!)"
