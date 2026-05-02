@@ -32,9 +32,9 @@ const (
 
 const (
 	// OAuth server configuration
-	oauthServerPort    = ":8080"
+	oauthServerPort    = ":3000"
 	oauthCallbackPath  = "/oauth2callback"
-	oauthRedirectURL   = "http://localhost:8080/oauth2callback"
+	oauthRedirectURL   = "http://localhost:3000/oauth2callback"
 	oauthServerTimeout = 5 * time.Second
 	oauthTimeout       = 3 * time.Minute
 	oauthServerStartup = 100 * time.Millisecond

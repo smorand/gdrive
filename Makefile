@@ -15,6 +15,16 @@ BUILD_DIR=bin
 GO_MOD_PATH=go.mod
 GO_SUM_PATH=go.sum
 
+# Install directory: /usr/local/bin if root, $HOME/.local/bin otherwise
+IS_ROOT=$(shell [ $$(id -u) -eq 0 ] && echo "yes" || echo "no")
+ifeq ($(IS_ROOT),yes)
+	DEFAULT_INSTALL_DIR=/usr/local/bin
+	DEFAULT_LIB_DIR=/usr/local/lib
+else
+	DEFAULT_INSTALL_DIR=$(HOME)/.local/bin
+	DEFAULT_LIB_DIR=$(HOME)/.local/lib
+endif
+
 # Platform-specific binary names
 BINARY_LINUX=$(BUILD_DIR)/$(BINARY_NAME)-linux-amd64
 BINARY_DARWIN_INTEL=$(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64
@@ -120,29 +130,41 @@ install: build
 		exit 1; \
 	fi
 ifndef TARGET
-	@echo "Installing $(BINARY_NAME) ($(CURRENT_PLATFORM)) to /usr/local/bin..."
-	@sudo cp $(CURRENT_BINARY) /usr/local/bin/$(BINARY_NAME)
+	@echo "Installing $(BINARY_NAME) ($(CURRENT_PLATFORM)) to $(DEFAULT_INSTALL_DIR)..."
+	@mkdir -p $(DEFAULT_INSTALL_DIR)
+	@cp $(CURRENT_BINARY) $(DEFAULT_INSTALL_DIR)/$(BINARY_NAME)
+ifeq ($(GOOS),darwin)
+	@echo "Signing binary for macOS..."
+	@codesign -f -s - $(DEFAULT_INSTALL_DIR)/$(BINARY_NAME)
+endif
 	@echo "Installation complete!"
 else
 	@echo "Installing $(BINARY_NAME) ($(CURRENT_PLATFORM)) to $(TARGET)..."
-	@cp $(CURRENT_BINARY) $(TARGET)/$(BINARY_NAME) 2>/dev/null || sudo cp $(CURRENT_BINARY) $(TARGET)/$(BINARY_NAME)
+	@mkdir -p $(TARGET)
+	@cp $(CURRENT_BINARY) $(TARGET)/$(BINARY_NAME)
+ifeq ($(GOOS),darwin)
+	@echo "Signing binary for macOS..."
+	@codesign -f -s - $(TARGET)/$(BINARY_NAME)
+endif
 	@echo "Installation complete!"
 endif
 
 # Install launcher script (for multi-platform distribution)
 install-launcher: build-all
 ifndef TARGET
-	@echo "Installing launcher script to /usr/local/bin/$(BINARY_NAME)..."
-	@sudo cp $(LAUNCHER_SCRIPT) /usr/local/bin/$(BINARY_NAME)
-	@echo "Installing platform binaries to /usr/local/lib/$(BINARY_NAME)/..."
-	@sudo mkdir -p /usr/local/lib/$(BINARY_NAME)
-	@sudo cp $(BINARY_LINUX) /usr/local/lib/$(BINARY_NAME)/
-	@sudo cp $(BINARY_DARWIN_INTEL) /usr/local/lib/$(BINARY_NAME)/
-	@sudo cp $(BINARY_DARWIN_ARM) /usr/local/lib/$(BINARY_NAME)/
+	@echo "Installing launcher script to $(DEFAULT_INSTALL_DIR)/$(BINARY_NAME)..."
+	@mkdir -p $(DEFAULT_INSTALL_DIR)
+	@cp $(LAUNCHER_SCRIPT) $(DEFAULT_INSTALL_DIR)/$(BINARY_NAME)
+	@echo "Installing platform binaries to $(DEFAULT_LIB_DIR)/$(BINARY_NAME)/..."
+	@mkdir -p $(DEFAULT_LIB_DIR)/$(BINARY_NAME)
+	@cp $(BINARY_LINUX) $(DEFAULT_LIB_DIR)/$(BINARY_NAME)/
+	@cp $(BINARY_DARWIN_INTEL) $(DEFAULT_LIB_DIR)/$(BINARY_NAME)/
+	@cp $(BINARY_DARWIN_ARM) $(DEFAULT_LIB_DIR)/$(BINARY_NAME)/
 	@echo "Installation complete!"
 else
 	@echo "Installing launcher script to $(TARGET)/$(BINARY_NAME)..."
-	@cp $(LAUNCHER_SCRIPT) $(TARGET)/$(BINARY_NAME) 2>/dev/null || sudo cp $(LAUNCHER_SCRIPT) $(TARGET)/$(BINARY_NAME)
+	@mkdir -p $(TARGET)
+	@cp $(LAUNCHER_SCRIPT) $(TARGET)/$(BINARY_NAME)
 	@echo "Note: Platform binaries remain in $(BUILD_DIR)/"
 	@echo "Installation complete!"
 endif
@@ -159,10 +181,11 @@ uninstall:
 		if [ "$$(basename $$(dirname $$BINARY_PATH))" = "bin" ]; then \
 			echo "Found $(BINARY_NAME) at $$BINARY_PATH"; \
 			echo "Removing..."; \
-			sudo rm -f "$$BINARY_PATH"; \
-			if [ -d "/usr/local/lib/$(BINARY_NAME)" ]; then \
-				echo "Removing platform binaries..."; \
-				sudo rm -rf "/usr/local/lib/$(BINARY_NAME)"; \
+			rm -f "$$BINARY_PATH" 2>/dev/null || sudo rm -f "$$BINARY_PATH"; \
+			LIB_DIR="$$(dirname $$(dirname $$BINARY_PATH))/lib/$(BINARY_NAME)"; \
+			if [ -d "$$LIB_DIR" ]; then \
+				echo "Removing platform binaries from $$LIB_DIR..."; \
+				rm -rf "$$LIB_DIR" 2>/dev/null || sudo rm -rf "$$LIB_DIR"; \
 			fi; \
 			echo "Uninstallation complete!"; \
 		else \
@@ -360,7 +383,7 @@ help:
 	@echo "  build           - Build the binary for current platform ($(CURRENT_PLATFORM))"
 	@echo "  build-all       - Build for all platforms and create launcher script"
 	@echo "  rebuild         - Clean all and rebuild from scratch"
-	@echo "  install         - Install current platform binary to /usr/local/bin (or TARGET)"
+	@echo "  install         - Install current platform binary to $(DEFAULT_INSTALL_DIR) (or TARGET)"
 	@echo "  install-launcher - Install launcher script with all platform binaries"
 	@echo "  uninstall       - Remove installed binary"
 	@echo "  clean           - Remove build artifacts"
