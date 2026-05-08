@@ -31,6 +31,7 @@ var (
 	notifyFlag    bool
 	messageFlag   string
 	daysBackFlag  int
+	mimeTypeFlag  string
 )
 
 // Global config and flags
@@ -250,6 +251,7 @@ Examples:
 	}
 
 	cmd.Flags().BoolVar(&useIDFlag, "id", false, "Treat remote_folder as a Drive folder ID")
+	cmd.Flags().StringVar(&mimeTypeFlag, "mime", "", "Force MIME type (default: auto-detect from extension)")
 
 	return cmd
 }
@@ -724,7 +726,7 @@ func runFileUpload(cmd *cobra.Command, args []string) error {
 	}
 
 	// Upload file
-	if _, err := ds.UploadFile(localFile, folderID, true); err != nil {
+	if _, err := ds.UploadFile(localFile, folderID, mimeTypeFlag, true); err != nil {
 		return err
 	}
 
@@ -1394,8 +1396,8 @@ func uploadFolderRecursive(ds *drive.Service, localPath, parentID, remotePath st
 				return err
 			}
 		} else {
-			// Upload file
-			if _, err := ds.UploadFile(itemPath, parentID, true); err != nil {
+			// Upload file (auto-detect MIME from extension)
+			if _, err := ds.UploadFile(itemPath, parentID, "", true); err != nil {
 				return err
 			}
 		}

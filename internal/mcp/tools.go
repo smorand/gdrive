@@ -895,7 +895,7 @@ func registerCreateUploadURLTool(s *Server) {
 
 		// Auto-detect MIME type from extension if not provided
 		if mimeType == "" {
-			mimeType = detectMimeType(fileName)
+			mimeType = drive.DetectMimeType(fileName)
 		}
 
 		// Check if file already exists (for versioning)
@@ -1053,39 +1053,8 @@ func registerDownloadContentTool(s *Server) {
 	})
 }
 
-// detectMimeType returns a MIME type based on file extension.
+// detectMimeType is a thin wrapper around drive.DetectMimeType to keep
+// existing callers and tests within this package working.
 func detectMimeType(filename string) string {
-	ext := strings.ToLower(filename)
-	if idx := strings.LastIndex(ext, "."); idx >= 0 {
-		ext = ext[idx:]
-	}
-
-	mimeTypes := map[string]string{
-		".pdf":  "application/pdf",
-		".doc":  "application/msword",
-		".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-		".xls":  "application/vnd.ms-excel",
-		".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-		".ppt":  "application/vnd.ms-powerpoint",
-		".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-		".txt":  "text/plain",
-		".csv":  "text/csv",
-		".html": "text/html",
-		".json": "application/json",
-		".xml":  "application/xml",
-		".zip":  "application/zip",
-		".png":  "image/png",
-		".jpg":  "image/jpeg",
-		".jpeg": "image/jpeg",
-		".gif":  "image/gif",
-		".svg":  "image/svg+xml",
-		".mp4":  "video/mp4",
-		".mp3":  "audio/mpeg",
-		".wav":  "audio/wav",
-	}
-
-	if mt, ok := mimeTypes[ext]; ok {
-		return mt
-	}
-	return "application/octet-stream"
+	return drive.DetectMimeType(filename)
 }

@@ -48,6 +48,15 @@ gdrive/
    - Comprehensive MIME type mappings for all common file types
    - Exports: `MIMETypeMappings`, `ExportFormats` for MIME type handling
 
+   **Upload MIME type handling** (`UploadFile(localPath, parentID, mimeType, showProgress)`):
+   - When `mimeType` is empty, falls back to `drive.DetectMimeType(filename)` from `mime.go` — extension-based detection that explicitly maps Office formats (.pptx/.docx/.xlsx/...) to their OOXML MIME types. Necessary because OOXML files have a ZIP (PK) signature; without explicit typing, Drive stores them as `application/zip`, breaks Slides/Docs/Sheets opening, and shows a generic ZIP icon.
+   - Pass an explicit `mimeType` to override (CLI exposes this via `gdrive file upload --mime ...`).
+   - The metadata's `MimeType` is set on both create and update paths so a re-upload corrects a file that was previously typed wrong.
+
+3. **internal/drive/mime.go** - Extension → canonical MIME type mapping
+   - `DetectMimeType(filename string) string` — the single source of truth. The MCP `detectMimeType` helper in `internal/mcp/tools.go` is now a thin wrapper.
+   - When extending: add to `extensionMimeTypes`. Office (OOXML, ODF) extensions MUST be listed *before* `.zip` semantically (the map ordering is irrelevant since lookup is by exact extension, but the comment documents the intent).
+
 3. **internal/drive/activity.go** - Activity tracking
    - `ChangeInfo` and `RevisionInfo` structs for activity data
    - `DriveActivityInfo` for comprehensive activity history
