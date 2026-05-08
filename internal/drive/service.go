@@ -198,7 +198,13 @@ func (ds *Service) FindFile(filename, parentID string) (*drive.File, error) {
 }
 
 // UploadFile uploads a file to Google Drive.
-func (ds *Service) UploadFile(localPath, parentID string, showProgress bool) (string, error) {
+//
+// mimeType, if non-empty, forces the Drive MIME type for the upload.
+// When empty, the MIME type is detected from the extension via
+// DetectMimeType (which knows how to map .pptx/.docx/.xlsx and friends to
+// their OOXML types instead of letting content sniffing tag them as
+// application/zip).
+func (ds *Service) UploadFile(localPath, parentID, mimeType string, showProgress bool) (string, error) {
 	filename := filepath.Base(localPath)
 	existingFile, err := ds.FindFile(filename, parentID)
 	if err != nil {
@@ -222,12 +228,19 @@ func (ds *Service) UploadFile(localPath, parentID string, showProgress bool) (st
 		reader = io.TeeReader(file, bar)
 	}
 
+	if mimeType == "" {
+		mimeType = DetectMimeType(filename)
+	}
+
 	if existingFile != nil {
-		// Update existing file
+		// Update existing file. We pass the MIME type so updates also stay
+		// correct (Drive otherwise keeps the original type, but a freshly
+		// detected type matters when the prior upload was wrong).
 		if showProgress {
 			fmt.Printf("Updating: %s\n", filename)
 		}
-		updatedFile, err := ds.API.Files.Update(existingFile.Id, &drive.File{}).Media(reader).Do()
+		updateMeta := &drive.File{MimeType: mimeType}
+		updatedFile, err := ds.API.Files.Update(existingFile.Id, updateMeta).Media(reader).Do()
 		if err != nil {
 			return "", err
 		}
@@ -239,8 +252,9 @@ func (ds *Service) UploadFile(localPath, parentID string, showProgress bool) (st
 		fmt.Printf("Uploading: %s\n", filename)
 	}
 	fileMetadata := &drive.File{
-		Name:    filename,
-		Parents: []string{parentID},
+		Name:     filename,
+		Parents:  []string{parentID},
+		MimeType: mimeType,
 	}
 	createdFile, err := ds.API.Files.Create(fileMetadata).Media(reader).Fields("id").Do()
 	if err != nil {
