@@ -4,6 +4,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -245,13 +246,15 @@ func fileUploadCmd() *cobra.Command {
 Examples:
   gdrive file upload ./myfile.txt Parameters/bin
   gdrive file upload /path/to/file.pdf Documents
-  gdrive file upload ./myfile.txt 1a2b3c4d5e --id`,
+  gdrive file upload ./myfile.txt 1a2b3c4d5e --id
+  gdrive file upload ./toto.ogg Documents --run-after 'trash "{}"'`,
 		Args: cobra.ExactArgs(2),
 		RunE: runFileUpload,
 	}
 
 	cmd.Flags().BoolVar(&useIDFlag, "id", false, "Treat remote_folder as a Drive folder ID")
 	cmd.Flags().StringVar(&mimeTypeFlag, "mime", "", "Force MIME type (default: auto-detect from extension)")
+	cmd.Flags().String("run-after", "", "Shell command to run after a successful upload ({} is replaced by LOCAL_FILE)")
 
 	return cmd
 }
@@ -467,15 +470,23 @@ func folderUploadCmd() *cobra.Command {
 		Short: "Upload a folder recursively to Google Drive",
 		Long: `Upload a folder recursively to Google Drive. Creates new versions for existing files.
 
+By default the contents of LOCAL_SRC are uploaded directly into REMOTE_FOLDER
+(the LOCAL_SRC name itself is not preserved). Use --create to create a subfolder
+named after LOCAL_SRC inside REMOTE_FOLDER and upload into it.
+
 Examples:
   gdrive folder upload ./my_project Parameters/Projects
   gdrive folder upload /path/to/folder Documents/Backup
-  gdrive folder upload ./my_project 1a2b3c4d5e --id`,
+  gdrive folder upload ./my_project 1a2b3c4d5e --id
+  gdrive folder upload ./my_project Documents --create
+  gdrive folder upload ./my_project Documents --run-after 'trash "{}"'`,
 		Args: cobra.ExactArgs(2),
 		RunE: runFolderUpload,
 	}
 
 	cmd.Flags().BoolVar(&useIDFlag, "id", false, "Treat remote_folder as a Drive folder ID")
+	cmd.Flags().Bool("create", false, "Create a subfolder named after LOCAL_SRC inside REMOTE_FOLDER and upload into it")
+	cmd.Flags().String("run-after", "", "Shell command to run after a successful upload ({} is replaced by LOCAL_SRC)")
 
 	return cmd
 }
@@ -731,6 +742,17 @@ func runFileUpload(cmd *cobra.Command, args []string) error {
 	}
 
 	color.Green("Uploaded: %s -> %s/%s", localFile, remoteFolder, filepath.Base(localFile))
+
+	if runAfter, _ := cmd.Flags().GetString("run-after"); runAfter != "" {
+		expanded := strings.ReplaceAll(runAfter, "{}", localFile)
+		shellCmd := exec.Command("sh", "-c", expanded)
+		shellCmd.Stdout = os.Stdout
+		shellCmd.Stderr = os.Stderr
+		if err := shellCmd.Run(); err != nil {
+			return fmt.Errorf("upload succeeded but --run-after command failed: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -1348,12 +1370,50 @@ func runFolderUpload(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// If --create, create (or reuse) a subfolder named after LOCAL_SRC inside the destination
+	uploadParentID := folderID
+	uploadRemotePath := remoteFolder
+	if createFlag, _ := cmd.Flags().GetBool("create"); createFlag {
+		baseName := filepath.Base(strings.TrimRight(localSrc, "/"))
+		existing, err := ds.FindFile(baseName, folderID)
+		if err != nil {
+			return err
+		}
+		if existing != nil && ds.IsFolder(existing) {
+			uploadParentID = existing.Id
+		} else {
+			fileMetadata := &driveapi.File{
+				Name:     baseName,
+				MimeType: "application/vnd.google-apps.folder",
+				Parents:  []string{folderID},
+			}
+			folder, err := ds.API.Files.Create(fileMetadata).Fields("id").Do()
+			if err != nil {
+				return fmt.Errorf("failed to create subfolder %q: %w", baseName, err)
+			}
+			uploadParentID = folder.Id
+			fmt.Printf("Created folder: %s/%s\n", remoteFolder, baseName)
+		}
+		uploadRemotePath = remoteFolder + "/" + baseName
+	}
+
 	// Upload recursively
-	if err := uploadFolderRecursive(ds, localSrc, folderID, remoteFolder); err != nil {
+	if err := uploadFolderRecursive(ds, localSrc, uploadParentID, uploadRemotePath); err != nil {
 		return err
 	}
 
-	color.Green("Uploaded folder: %s -> %s", localSrc, remoteFolder)
+	color.Green("Uploaded folder: %s -> %s", localSrc, uploadRemotePath)
+
+	if runAfter, _ := cmd.Flags().GetString("run-after"); runAfter != "" {
+		expanded := strings.ReplaceAll(runAfter, "{}", localSrc)
+		shellCmd := exec.Command("sh", "-c", expanded)
+		shellCmd.Stdout = os.Stdout
+		shellCmd.Stderr = os.Stderr
+		if err := shellCmd.Run(); err != nil {
+			return fmt.Errorf("upload succeeded but --run-after command failed: %w", err)
+		}
+	}
+
 	return nil
 }
 
