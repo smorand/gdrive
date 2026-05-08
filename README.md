@@ -102,6 +102,10 @@ gdrive file download 1a2b3c4d5e --id
 gdrive file upload ./myfile.txt Parameters/bin
 gdrive file upload /path/to/file.pdf Documents
 gdrive file upload ./myfile.txt 1a2b3c4d5e --id
+
+# Run a shell command on the local file after a successful upload
+# {} is replaced by LOCAL_FILE; gdrive returns non-zero if the command fails
+gdrive file upload ./report.pdf Documents --run-after 'trash "{}"'
 ```
 
 **Delete a file:**
@@ -182,6 +186,14 @@ gdrive folder create Documents/Projects/2024
 gdrive folder upload ./my_project Parameters/Projects
 gdrive folder upload /path/to/folder Documents/Backup
 gdrive folder upload ./my_project 1a2b3c4d5e --id
+
+# By default the contents of LOCAL_SRC are flattened into REMOTE_FOLDER.
+# Use --create to create a subfolder named after LOCAL_SRC and upload into it.
+gdrive folder upload ./my_project Documents --create
+
+# Run a shell command on the local folder after a successful upload
+# {} is replaced by LOCAL_SRC; gdrive returns non-zero if the command fails
+gdrive folder upload ./my_project Documents --run-after 'trash "{}"'
 ```
 
 **Download a folder:**

@@ -180,6 +180,10 @@ gdrive/
 3. If exists: update file (new version)
 4. If not: create new file
 5. Use io.TeeReader for progress tracking
+6. If --run-after is set and upload succeeded, run the command via `sh -c`
+   with `{}` substituted by LOCAL_FILE (the argument as provided). A non-zero
+   exit code from the post-command turns into a returned error (gdrive exits
+   non-zero) even though the upload itself succeeded.
 ```
 
 ### Folder Upload Logic
@@ -187,11 +191,20 @@ gdrive/
 ```
 1. Verify local folder exists
 2. Resolve remote parent folder (must exist)
-3. For each item in local folder:
+3. If --create is set, find-or-create a subfolder named filepath.Base(LOCAL_SRC)
+   inside the resolved remote folder; that subfolder becomes the upload parent.
+   Without --create (default), contents of LOCAL_SRC are flattened directly into
+   REMOTE_FOLDER (the LOCAL_SRC name is dropped). The flag exists for backwards
+   compatibility — historical behavior was the flattening one.
+4. For each item in local folder:
    - If file: upload it
    - If folder:
      - Create on Drive if doesn't exist
      - Recurse into it
+5. If --run-after is set and the recursive upload succeeded, run the command
+   via `sh -c` with `{}` substituted by LOCAL_SRC. Same semantics as
+   `file upload`: a non-zero exit from the post-command bubbles up as a
+   gdrive error.
 ```
 
 ### Download with Timestamp Preservation
