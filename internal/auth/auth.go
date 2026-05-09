@@ -276,6 +276,60 @@ func GetClientFromContext(ctx context.Context) *http.Client {
 	return nil
 }
 
+// loadOAuthConfig reads the credentials file and returns the parsed OAuth2 config.
+func loadOAuthConfig(cfg *Config) (*oauth2.Config, error) {
+	credPath, err := cfg.GetCredentialsPath()
+	if err != nil {
+		return nil, err
+	}
+
+	b, err := os.ReadFile(credPath)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read credentials file: %v", err)
+	}
+
+	config, err := google.ConfigFromJSON(b, drive.DriveScope, driveactivity.DriveActivityReadonlyScope)
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse credentials file: %v", err)
+	}
+
+	return config, nil
+}
+
+// getValidatedToken returns a token that is guaranteed to be usable against Google.
+// It loads the token from disk, then forces a refresh via TokenSource. If either
+// step fails (missing/corrupted file, revoked refresh token, invalid_grant, ...),
+// it removes the cached token and re-runs the interactive OAuth2 flow.
+func getValidatedToken(ctx context.Context, cfg *Config, config *oauth2.Config) (*oauth2.Token, error) {
+	tokenPath := cfg.GetTokenPath()
+
+	tok, err := LoadToken(tokenPath)
+	if err == nil {
+		// Force a refresh to validate the token is actually usable. If the refresh
+		// token has been revoked, this returns an error (typically invalid_grant)
+		// and we fall through to re-authentication.
+		refreshed, refreshErr := config.TokenSource(ctx, tok).Token()
+		if refreshErr == nil {
+			// Persist the refreshed token if it changed (new access token / expiry).
+			if refreshed.AccessToken != tok.AccessToken {
+				_ = SaveToken(tokenPath, refreshed)
+			}
+			return refreshed, nil
+		}
+		fmt.Fprintf(os.Stderr, "Cached token is no longer valid (%v), re-authenticating...\n", refreshErr)
+		_ = os.Remove(tokenPath)
+	}
+
+	tok, err = GetTokenFromWeb(config)
+	if err != nil {
+		return nil, err
+	}
+	if err := SaveToken(tokenPath, tok); err != nil {
+		return nil, err
+	}
+	return tok, nil
+}
+
 // GetAuthenticatedService returns an authenticated Drive service.
 // In MCP mode (context has OAuth config + token), uses context credentials.
 // In CLI mode, uses file-based credentials.
@@ -294,41 +348,20 @@ func GetAuthenticatedServiceWithContext(ctx context.Context, cfg *Config) (*driv
 		return srv, nil
 	}
 
-	// CLI mode: file-based credentials
-	credPath, err := cfg.GetCredentialsPath()
+	config, err := loadOAuthConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	b, err := os.ReadFile(credPath)
+	tok, err := getValidatedToken(ctx, cfg, config)
 	if err != nil {
-		return nil, fmt.Errorf("unable to read credentials file: %v", err)
+		return nil, err
 	}
 
-	config, err := google.ConfigFromJSON(b, drive.DriveScope, driveactivity.DriveActivityReadonlyScope)
-	if err != nil {
-		return nil, fmt.Errorf("unable to parse credentials file: %v", err)
-	}
-
-	tokenPath := cfg.GetTokenPath()
-	tok, err := LoadToken(tokenPath)
-	if err != nil {
-		// Get new token
-		tok, err = GetTokenFromWeb(config)
-		if err != nil {
-			return nil, err
-		}
-		if err := SaveToken(tokenPath, tok); err != nil {
-			return nil, err
-		}
-	}
-
-	client := config.Client(ctx, tok)
-	srv, err := drive.NewService(ctx, option.WithHTTPClient(client))
+	srv, err := drive.NewService(ctx, option.WithHTTPClient(config.Client(ctx, tok)))
 	if err != nil {
 		return nil, fmt.Errorf("unable to create Drive client: %v", err)
 	}
-
 	return srv, nil
 }
 
@@ -348,40 +381,19 @@ func GetAuthenticatedActivityServiceWithContext(ctx context.Context, cfg *Config
 		return srv, nil
 	}
 
-	// CLI mode: file-based credentials
-	credPath, err := cfg.GetCredentialsPath()
+	config, err := loadOAuthConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	b, err := os.ReadFile(credPath)
+	tok, err := getValidatedToken(ctx, cfg, config)
 	if err != nil {
-		return nil, fmt.Errorf("unable to read credentials file: %v", err)
+		return nil, err
 	}
 
-	config, err := google.ConfigFromJSON(b, drive.DriveScope, driveactivity.DriveActivityReadonlyScope)
-	if err != nil {
-		return nil, fmt.Errorf("unable to parse credentials file: %v", err)
-	}
-
-	tokenPath := cfg.GetTokenPath()
-	tok, err := LoadToken(tokenPath)
-	if err != nil {
-		// Get new token
-		tok, err = GetTokenFromWeb(config)
-		if err != nil {
-			return nil, err
-		}
-		if err := SaveToken(tokenPath, tok); err != nil {
-			return nil, err
-		}
-	}
-
-	client := config.Client(ctx, tok)
-	srv, err := driveactivity.NewService(ctx, option.WithHTTPClient(client))
+	srv, err := driveactivity.NewService(ctx, option.WithHTTPClient(config.Client(ctx, tok)))
 	if err != nil {
 		return nil, fmt.Errorf("unable to create Drive Activity client: %v", err)
 	}
-
 	return srv, nil
 }
