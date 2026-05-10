@@ -66,8 +66,8 @@ gdrive search "report"
 gdrive search QUERY [--type TYPE[,TYPE]] [--max N]
 
 # File operations
-gdrive file download FILE [LOCAL_FOLDER] [--id] [--overwrite]
-gdrive file upload   LOCAL_FILE REMOTE_FOLDER [--id] [--mime MIME_TYPE] [--run-after CMD]
+gdrive file download FILE [LOCAL_FOLDER] [--id] [--overwrite] [--format FMT]
+gdrive file upload   LOCAL_FILE REMOTE_FOLDER [--id] [--mime MIME_TYPE] [--convert] [--run-after CMD]
 gdrive file delete   FILE [--id]
 gdrive file rename   FILE NEW_NAME [--id]
 gdrive file move     FILE TARGET_FOLDER [--id]
@@ -170,16 +170,63 @@ gdrive folder upload ./report-2024 "My Drive/Backups" --run-after 'mv "{}" ~/arc
 
 The `{}` substitution is textual on the literal argument. Always quote `"{}"` in your command if the path may contain spaces.
 
+### Upload — `--convert` to Google Workspace
+
+`file upload --convert` asks Drive to convert the source file to the matching Google Workspace type during upload, based on the source extension:
+
+| Source extensions | Target Workspace type |
+|---|---|
+| `.md`, `.txt`, `.html`, `.htm`, `.rtf`, `.doc`, `.docx`, `.odt` | Google Docs |
+| `.csv`, `.tsv`, `.xls`, `.xlsx`, `.ods` | Google Sheets |
+| `.ppt`, `.pptx`, `.odp` | Google Slides |
+
+```bash
+# Create a native Google Doc from a Markdown file
+gdrive file upload ./spec.md "My Drive/Notes" --convert
+
+# Create a native Google Sheet from a CSV
+gdrive file upload ./data.csv "My Drive/Reports" --convert
+
+# Re-upload to update the same Doc (Drive re-converts the new media)
+gdrive file upload ./spec.md "My Drive/Notes" --convert
+```
+
+Rules:
+
+- The file at the target name must either not exist or already be a Workspace document of the matching target type. Mismatch (e.g. `spec.md` exists as a plain text file) returns an error — rename or delete the existing file first.
+- Unsupported extensions return an error listing the allowed ones.
+- `--mime` still works alongside `--convert` (it overrides the *source* content type sent to Drive, e.g. forcing `text/markdown` for an extensionless markdown file).
+- Without `--convert`, the file is uploaded as-is (no server-side conversion).
+
 ### Download — Google Workspace export
 
-When downloading a Google Workspace file, `gdrive` automatically picks an export format:
+When downloading a Google Workspace file, `gdrive` automatically picks an export format. Defaults:
 
-- Google Docs → `.docx`
+- Google Docs → `.pdf`
 - Google Sheets → `.xlsx`
 - Google Slides → `.pptx`
 - Google Drawings → `.pdf`
 
-The local filename extension is adjusted to match. Modification time from Drive is preserved on the local file via `os.Chtimes`.
+Override with `--format FMT`. Supported values per source type:
+
+- Docs: `md` (Markdown), `pdf` (default), `docx`, `txt`, `html`
+- Sheets: `xlsx` (default), `csv`, `pdf`
+- Slides: `pptx` (default), `pdf`
+- Drawings: `pdf` (default), `png`, `jpg` / `jpeg`, `svg`
+
+Forms, Sites, and Maps cannot be exported via the Drive API and will return `cannot export file type` — that is a Google limitation, not a gdrive one.
+
+The local filename extension is adjusted to match the export format. Modification time from Drive is preserved on the local file via `os.Chtimes`.
+
+```bash
+gdrive file download "My Drive/Notes/Spec"   --format md     # → Spec.md
+gdrive file download "My Drive/Reports/Q1"   --format csv    # → Q1.csv
+gdrive file download 1abc --id --format docx                 # → <name>.docx
+```
+
+For non-Workspace (binary) files, `--format` is ignored: the file is downloaded byte-for-byte.
+
+`folder download` always uses the per-type defaults; there is no per-file override flag for recursive downloads.
 
 ### Other file operations
 
@@ -394,6 +441,8 @@ Credential resolution order: **Secret Manager → Vault → local file**. Provid
 ### Tools exposed (21)
 
 12 read tools + 8 write tools + `ping`. All take Drive IDs (no path resolution server-side); transfers use signed URLs for binary data and direct content for text. Detailed tool reference: `.agent_docs/mcp-server.md` in the repository.
+
+The `read content` tool exports Workspace files to text-friendly MIME types: Google Docs → **Markdown** (`text/markdown`), Google Sheets → CSV, Google Slides → plain text. Markdown preserves headings, lists, links, and tables, which is the LLM-friendly format.
 
 ### Deployment
 

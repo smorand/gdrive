@@ -103,3 +103,45 @@ func DetectMimeType(filename string) string {
 	}
 	return "application/octet-stream"
 }
+
+// conversionTargets maps source extensions to the Google Workspace MIME type
+// that Drive can convert them to during upload (when --convert is set).
+//
+// Drive performs server-side conversion when Files.Create is called with
+// metadata.MimeType set to a google-apps.* type and the media body is
+// uploaded with a compatible source ContentType.
+var conversionTargets = map[string]string{
+	// Word-processing → Google Docs
+	".md":   DriveDocMimeType,
+	".txt":  DriveDocMimeType,
+	".html": DriveDocMimeType,
+	".htm":  DriveDocMimeType,
+	".rtf":  DriveDocMimeType,
+	".doc":  DriveDocMimeType,
+	".docx": DriveDocMimeType,
+	".odt":  DriveDocMimeType,
+
+	// Spreadsheets → Google Sheets
+	".csv":  DriveSheetMimeType,
+	".tsv":  DriveSheetMimeType,
+	".xls":  DriveSheetMimeType,
+	".xlsx": DriveSheetMimeType,
+	".ods":  DriveSheetMimeType,
+
+	// Presentations → Google Slides
+	".ppt":  DriveSlideMimeType,
+	".pptx": DriveSlideMimeType,
+	".odp":  DriveSlideMimeType,
+}
+
+// DetectConversionTarget returns the Google Workspace MIME type that Drive
+// can convert filename to (based on its extension) when uploading with
+// conversion enabled. Returns "" when the extension cannot be converted.
+func DetectConversionTarget(filename string) string {
+	idx := strings.LastIndex(filename, ".")
+	if idx < 0 {
+		return ""
+	}
+	ext := strings.ToLower(filename[idx:])
+	return conversionTargets[ext]
+}

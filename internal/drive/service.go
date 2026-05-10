@@ -12,6 +12,7 @@ import (
 
 	"github.com/schollz/progressbar/v3"
 	"google.golang.org/api/drive/v3"
+	"google.golang.org/api/googleapi"
 )
 
 const (
@@ -69,8 +70,10 @@ var MIMETypeMappings = map[string][]string{
 }
 
 // TextExportFormats maps Google Workspace MIME types to text-friendly export MIME types.
+// Google Docs are exported as Markdown so MCP `read content` returns LLM-ready text
+// preserving headings, lists, links, and tables.
 var TextExportFormats = map[string]string{
-	"application/vnd.google-apps.document":     "text/plain",
+	"application/vnd.google-apps.document":     "text/markdown",
 	"application/vnd.google-apps.spreadsheet":  "text/csv",
 	"application/vnd.google-apps.presentation": "text/plain",
 }
@@ -80,6 +83,7 @@ var ExportFormats = map[string]map[string]string{
 	"application/vnd.google-apps.document": {
 		"pdf":  "application/pdf",
 		"docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		"md":   "text/markdown",
 		"txt":  "text/plain",
 		"html": "text/html",
 	},
@@ -91,6 +95,13 @@ var ExportFormats = map[string]map[string]string{
 	"application/vnd.google-apps.presentation": {
 		"pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 		"pdf":  "application/pdf",
+	},
+	"application/vnd.google-apps.drawing": {
+		"pdf":  "application/pdf",
+		"png":  "image/png",
+		"jpg":  "image/jpeg",
+		"jpeg": "image/jpeg",
+		"svg":  "image/svg+xml",
 	},
 }
 
@@ -204,7 +215,15 @@ func (ds *Service) FindFile(filename, parentID string) (*drive.File, error) {
 // DetectMimeType (which knows how to map .pptx/.docx/.xlsx and friends to
 // their OOXML types instead of letting content sniffing tag them as
 // application/zip).
-func (ds *Service) UploadFile(localPath, parentID, mimeType string, showProgress bool) (string, error) {
+//
+// When convert is true, Drive performs server-side conversion to the
+// matching Google Workspace type (Docs / Sheets / Slides) determined by
+// DetectConversionTarget(filename). The source MIME (mimeType or auto-
+// detected) is sent as the upload ContentType so Drive can parse the
+// content. Convert is rejected when the extension has no conversion target,
+// or when an existing file with the same name has a different Workspace
+// type (the caller should rename or delete first).
+func (ds *Service) UploadFile(localPath, parentID, mimeType string, convert, showProgress bool) (string, error) {
 	filename := filepath.Base(localPath)
 	existingFile, err := ds.FindFile(filename, parentID)
 	if err != nil {
@@ -228,19 +247,42 @@ func (ds *Service) UploadFile(localPath, parentID, mimeType string, showProgress
 		reader = io.TeeReader(file, bar)
 	}
 
-	if mimeType == "" {
-		mimeType = DetectMimeType(filename)
+	sourceMime := mimeType
+	if sourceMime == "" {
+		sourceMime = DetectMimeType(filename)
+	}
+
+	var targetMime string
+	if convert {
+		targetMime = DetectConversionTarget(filename)
+		if targetMime == "" {
+			return "", fmt.Errorf("--convert: cannot convert %s; supported extensions: .md .txt .html .htm .rtf .doc .docx .odt .csv .tsv .xls .xlsx .ods .ppt .pptx .odp", filename)
+		}
+		if existingFile != nil && existingFile.MimeType != targetMime {
+			return "", fmt.Errorf("--convert: existing file %q has MIME %s but conversion target is %s; rename or delete it first",
+				filename, existingFile.MimeType, targetMime)
+		}
 	}
 
 	if existingFile != nil {
-		// Update existing file. We pass the MIME type so updates also stay
-		// correct (Drive otherwise keeps the original type, but a freshly
-		// detected type matters when the prior upload was wrong).
+		// Update existing file. When converting, the file is already a
+		// Workspace doc of the right type — the new media body is sent with
+		// the source ContentType and Drive re-converts. When not converting,
+		// we pass the freshly detected MIME so a previously mistyped upload
+		// gets corrected.
 		if showProgress {
 			fmt.Printf("Updating: %s\n", filename)
 		}
-		updateMeta := &drive.File{MimeType: mimeType}
-		updatedFile, err := ds.API.Files.Update(existingFile.Id, updateMeta).Media(reader).Do()
+		var updateMeta *drive.File
+		updateCall := ds.API.Files.Update(existingFile.Id, &drive.File{})
+		if convert {
+			updateCall = ds.API.Files.Update(existingFile.Id, &drive.File{}).
+				Media(reader, googleapi.ContentType(sourceMime))
+		} else {
+			updateMeta = &drive.File{MimeType: sourceMime}
+			updateCall = ds.API.Files.Update(existingFile.Id, updateMeta).Media(reader)
+		}
+		updatedFile, err := updateCall.Do()
 		if err != nil {
 			return "", err
 		}
@@ -251,12 +293,22 @@ func (ds *Service) UploadFile(localPath, parentID, mimeType string, showProgress
 	if showProgress {
 		fmt.Printf("Uploading: %s\n", filename)
 	}
-	fileMetadata := &drive.File{
-		Name:     filename,
-		Parents:  []string{parentID},
-		MimeType: mimeType,
+	createMeta := &drive.File{
+		Name:    filename,
+		Parents: []string{parentID},
 	}
-	createdFile, err := ds.API.Files.Create(fileMetadata).Media(reader).Fields("id").Do()
+	var createCall *drive.FilesCreateCall
+	if convert {
+		// metadata.MimeType = target Workspace type, media ContentType = source
+		createMeta.MimeType = targetMime
+		createCall = ds.API.Files.Create(createMeta).
+			Media(reader, googleapi.ContentType(sourceMime)).
+			Fields("id")
+	} else {
+		createMeta.MimeType = sourceMime
+		createCall = ds.API.Files.Create(createMeta).Media(reader).Fields("id")
+	}
+	createdFile, err := createCall.Do()
 	if err != nil {
 		return "", err
 	}
@@ -265,7 +317,10 @@ func (ds *Service) UploadFile(localPath, parentID, mimeType string, showProgress
 
 // DownloadFile downloads a file from Google Drive.
 // For Google Workspace files, it exports them to standard formats.
-func (ds *Service) DownloadFile(fileID, localPath string, preserveTimestamp, showProgress bool) error {
+// If formatOverride is non-empty, it forces the export format (e.g. "md", "pdf",
+// "docx", "txt", "html" for Docs; "xlsx", "csv", "pdf" for Sheets;
+// "pptx", "pdf" for Slides). It is ignored for non-Workspace files.
+func (ds *Service) DownloadFile(fileID, localPath, formatOverride string, preserveTimestamp, showProgress bool) error {
 	// Get file metadata
 	fileMetadata, err := ds.API.Files.Get(fileID).Fields("name, modifiedTime, size, mimeType").Do()
 	if err != nil {
@@ -278,7 +333,10 @@ func (ds *Service) DownloadFile(fileID, localPath string, preserveTimestamp, sho
 	// Check if it's a Google Workspace file
 	if ds.IsGoogleWorkspaceFile(fileMetadata) {
 		// Determine export format
-		exportFormat = ds.GetDefaultExportFormat(fileMetadata.MimeType)
+		exportFormat = formatOverride
+		if exportFormat == "" {
+			exportFormat = ds.GetDefaultExportFormat(fileMetadata.MimeType)
+		}
 		if exportFormat == "" {
 			return fmt.Errorf("cannot export file type: %s", fileMetadata.MimeType)
 		}
@@ -286,7 +344,7 @@ func (ds *Service) DownloadFile(fileID, localPath string, preserveTimestamp, sho
 		// Get export MIME type
 		exportMimeType := ds.GetExportMimeType(fileMetadata.MimeType, exportFormat)
 		if exportMimeType == "" {
-			return fmt.Errorf("unknown export format: %s", exportFormat)
+			return fmt.Errorf("export format %q is not supported for %s", exportFormat, fileMetadata.MimeType)
 		}
 
 		// Adjust filename extension
@@ -680,6 +738,8 @@ func (ds *Service) GetDefaultExportFormat(mimeType string) string {
 		return "xlsx"
 	case "application/vnd.google-apps.presentation":
 		return "pptx"
+	case "application/vnd.google-apps.drawing":
+		return "pdf"
 	default:
 		return ""
 	}

@@ -34,6 +34,8 @@ var (
 	messageFlag   string
 	daysBackFlag  int
 	mimeTypeFlag  string
+	formatFlag    string
+	convertFlag   bool
 )
 
 // Global config and flags
@@ -227,13 +229,21 @@ Examples:
   gdrive file download Parameters/file.txt
   gdrive file download Parameters/file.txt ./downloads
   gdrive file download Parameters/file.txt ./downloads --overwrite
-  gdrive file download 1a2b3c4d5e --id`,
+  gdrive file download 1a2b3c4d5e --id
+  gdrive file download MyDoc --format md           # Google Doc as Markdown
+  gdrive file download MySheet --format csv        # Google Sheet as CSV
+
+Workspace export formats (used only when the source is a Google Workspace file):
+  Docs:   md (Markdown), pdf (default), docx, txt, html
+  Sheets: xlsx (default), csv, pdf
+  Slides: pptx (default), pdf`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: runFileDownload,
 	}
 
 	cmd.Flags().BoolVar(&overwriteFlag, "overwrite", false, "Overwrite without asking")
 	cmd.Flags().BoolVar(&useIDFlag, "id", false, "Treat remote_file as a Drive file ID")
+	cmd.Flags().StringVar(&formatFlag, "format", "", "Export format for Google Workspace files (md, pdf, docx, txt, html, xlsx, csv, pptx). Ignored for binary files.")
 
 	return cmd
 }
@@ -248,13 +258,16 @@ Examples:
   gdrive file upload ./myfile.txt Parameters/bin
   gdrive file upload /path/to/file.pdf Documents
   gdrive file upload ./myfile.txt 1a2b3c4d5e --id
-  gdrive file upload ./toto.ogg Documents --run-after 'trash "{}"'`,
+  gdrive file upload ./toto.ogg Documents --run-after 'trash "{}"'
+  gdrive file upload ./spec.md Documents --convert        # → Google Doc
+  gdrive file upload ./data.csv Reports --convert         # → Google Sheet`,
 		Args: cobra.ExactArgs(2),
 		RunE: runFileUpload,
 	}
 
 	cmd.Flags().BoolVar(&useIDFlag, "id", false, "Treat remote_folder as a Drive folder ID")
 	cmd.Flags().StringVar(&mimeTypeFlag, "mime", "", "Force MIME type (default: auto-detect from extension)")
+	cmd.Flags().BoolVar(&convertFlag, "convert", false, "Convert source file to a Google Workspace type (Docs/Sheets/Slides) based on extension")
 	cmd.Flags().String("run-after", "", "Shell command to run after a successful upload ({} is replaced by LOCAL_FILE)")
 
 	return cmd
@@ -694,7 +707,7 @@ func runFileDownload(cmd *cobra.Command, args []string) error {
 	}
 
 	// Download file
-	if err := ds.DownloadFile(fileID, localPath, true, true); err != nil {
+	if err := ds.DownloadFile(fileID, localPath, formatFlag, true, true); err != nil {
 		return err
 	}
 
@@ -738,7 +751,7 @@ func runFileUpload(cmd *cobra.Command, args []string) error {
 	}
 
 	// Upload file
-	if _, err := ds.UploadFile(localFile, folderID, mimeTypeFlag, true); err != nil {
+	if _, err := ds.UploadFile(localFile, folderID, mimeTypeFlag, convertFlag, true); err != nil {
 		return err
 	}
 
@@ -1458,7 +1471,7 @@ func uploadFolderRecursive(ds *drive.Service, localPath, parentID, remotePath st
 			}
 		} else {
 			// Upload file (auto-detect MIME from extension)
-			if _, err := ds.UploadFile(itemPath, parentID, "", true); err != nil {
+			if _, err := ds.UploadFile(itemPath, parentID, "", false, true); err != nil {
 				return err
 			}
 		}
@@ -1593,7 +1606,7 @@ func downloadFolderRecursive(ds *drive.Service, folderID, localPath string, over
 			defer func() { <-sem }()
 
 			// Download file
-			if err := ds.DownloadFile(fileItem.Id, path, true, true); err != nil {
+			if err := ds.DownloadFile(fileItem.Id, path, "", true, true); err != nil {
 				errMu.Lock()
 				errors = append(errors, fmt.Errorf("failed to download %s: %v", fileItem.Name, err))
 				errMu.Unlock()
