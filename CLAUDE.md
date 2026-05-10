@@ -63,13 +63,15 @@ gdrive/
    - Comprehensive MIME type mappings for all common file types
    - Exports: `MIMETypeMappings`, `ExportFormats` for MIME type handling
 
-   **Upload MIME type handling** (`UploadFile(localPath, parentID, mimeType, showProgress)`):
+   **Upload MIME type handling** (`UploadFile(localPath, parentID, mimeType, convert, showProgress)`):
    - When `mimeType` is empty, falls back to `drive.DetectMimeType(filename)` from `mime.go` — extension-based detection that explicitly maps Office formats (.pptx/.docx/.xlsx/...) to their OOXML MIME types. Necessary because OOXML files have a ZIP (PK) signature; without explicit typing, Drive stores them as `application/zip`, breaks Slides/Docs/Sheets opening, and shows a generic ZIP icon.
    - Pass an explicit `mimeType` to override (CLI exposes this via `gdrive file upload --mime ...`).
    - The metadata's `MimeType` is set on both create and update paths so a re-upload corrects a file that was previously typed wrong.
+   - `convert=true` asks Drive to convert to a Workspace type based on `DetectConversionTarget(filename)`. The source MIME is passed as `googleapi.ContentType(...)` on the Media call; `metadata.MimeType` is the target (Doc/Sheet/Slide). See the "Google Workspace Upload (Conversion)" section below.
 
 3. **internal/drive/mime.go** - Extension → canonical MIME type mapping
    - `DetectMimeType(filename string) string` — the single source of truth. The MCP `detectMimeType` helper in `internal/mcp/tools.go` is now a thin wrapper.
+   - `DetectConversionTarget(filename string) string` — extension → Google Workspace MIME for `--convert` uploads. Returns `""` for non-convertible extensions.
    - When extending: add to `extensionMimeTypes`. Office (OOXML, ODF) extensions MUST be listed *before* `.zip` semantically (the map ordering is irrelevant since lookup is by exact extension, but the comment documents the intent).
 
 3. **internal/drive/activity.go** - Activity tracking
@@ -275,12 +277,48 @@ gdrive/
 
 ```
 1. Detect Google Workspace file via MIME type
-2. Determine default export format (PDF/DOCX/XLSX/PPTX)
-3. Get export MIME type from format mapping
+2. Pick export format:
+     - if --format FMT (CLI) is supplied, use it
+     - else use the per-type default from GetDefaultExportFormat:
+         Docs → pdf, Sheets → xlsx, Slides → pptx, Drawings → pdf
+3. Resolve the export MIME type from ExportFormats map. Supported per type:
+     - Docs:     md (text/markdown), pdf, docx, txt, html
+     - Sheets:   xlsx, csv, pdf
+     - Slides:   pptx, pdf
+     - Drawings: pdf, png, jpg/jpeg, svg
 4. Use Files.Export() API instead of Files.Get()
 5. Adjust local filename extension based on export format
 6. Download and save with proper extension
 ```
+
+**MCP `read content`** uses `TextExportFormats` (see `service.go`): Docs export as
+`text/markdown` (LLM-friendly: keeps headings, lists, links, tables), Sheets as
+`text/csv`, Slides as `text/plain`. `DownloadFileContent` (raw bytes) defaults to
+`text/plain` when no override is given by the caller.
+
+**Forms / Sites / Maps** are flagged as Workspace files by `IsGoogleWorkspaceFile`
+but have no export MIME types in the Drive API — downloading them returns
+`cannot export file type` (Google API limitation, not a gdrive gap).
+
+### Google Workspace Upload (Conversion)
+
+```
+1. Source extension → target Workspace MIME via DetectConversionTarget:
+     - .md/.txt/.html/.htm/.rtf/.doc/.docx/.odt → Docs
+     - .csv/.tsv/.xls/.xlsx/.ods                → Sheets
+     - .ppt/.pptx/.odp                          → Slides
+2. UploadFile(localPath, parentID, mimeType, convert=true, showProgress):
+     - On create: metadata.MimeType = target Workspace type,
+       Media() is called with googleapi.ContentType(sourceMime).
+     - On update of an existing Workspace doc of the same target type:
+       metadata stays empty, Media() carries the new content + source MIME,
+       Drive re-converts.
+     - On update where existing.MimeType != target: error, ask user to
+       rename or delete.
+3. Unsupported extensions return an error listing the allowed ones.
+```
+
+CLI: `gdrive file upload LOCAL_FILE REMOTE_FOLDER --convert`.
 
 ### Permissions Management
 
@@ -587,9 +625,11 @@ golangci-lint run  # if installed
 | `--parallel` flag | ✅ | Configurable concurrency (1-20) |
 | `--new-only` flag | ✅ | Skip unchanged files |
 | `--type` filter | ✅ | MIME type shortcuts |
+| `--format` flag (download) | ✅ | Override Workspace export format (md/pdf/docx/txt/html/xlsx/csv/pptx/png/svg/jpg) |
+| `--convert` flag (upload) | ✅ | Server-side convert source → Google Docs/Sheets/Slides |
 | Progress bars | ✅ | Real-time transfer status |
 | Timestamp preservation | ✅ | Maintain modification times |
-| Google Workspace export | ✅ | Auto-export to PDF/DOCX/XLSX/PPTX |
+| Google Workspace export | ✅ | Docs (md/pdf/docx/txt/html), Sheets (xlsx/csv/pdf), Slides (pptx/pdf), Drawings (pdf/png/jpg/svg) |
 | Path reconstruction | ✅ | Full path from root to file |
 | Permissions management | ✅ | Complete access control |
 | Shared Drives support | ✅ | SupportsAllDrives enabled |
