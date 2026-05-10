@@ -7,7 +7,9 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -15,11 +17,14 @@ import (
 	"runtime"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/driveactivity/v2"
 	"google.golang.org/api/option"
+
+	"gdrive/internal/telemetry"
 )
 
 // Context keys for MCP mode token injection.
@@ -123,7 +128,9 @@ func (c *Config) GetCredentialsPath() (string, error) {
 }
 
 // GetTokenFromWeb requests a token from the web using a local server.
-func GetTokenFromWeb(config *oauth2.Config) (*oauth2.Token, error) {
+// The provided context bounds the OAuth code exchange and the local
+// callback server's graceful shutdown.
+func GetTokenFromWeb(ctx context.Context, config *oauth2.Config) (*oauth2.Token, error) {
 	// Use localhost with configured port
 	config.RedirectURL = oauthRedirectURL
 
@@ -199,14 +206,16 @@ func GetTokenFromWeb(config *oauth2.Config) (*oauth2.Token, error) {
 	}
 
 	// Shutdown server
-	ctx, cancel := context.WithTimeout(context.Background(), oauthServerTimeout)
+	shutdownCtx, cancel := context.WithTimeout(ctx, oauthServerTimeout)
 	defer cancel()
-	_ = server.Shutdown(ctx)
+	if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		slog.Warn("OAuth callback server shutdown failed", "err", err)
+	}
 
 	// Exchange code for token
-	tok, err := config.Exchange(context.Background(), code)
+	tok, err := config.Exchange(ctx, code)
 	if err != nil {
-		return nil, fmt.Errorf("unable to retrieve token from web: %v", err)
+		return nil, fmt.Errorf("unable to retrieve token from web: %w", err)
 	}
 
 	fmt.Println("\nAuthentication successful!")
@@ -312,15 +321,21 @@ func getValidatedToken(ctx context.Context, cfg *Config, config *oauth2.Config) 
 		if refreshErr == nil {
 			// Persist the refreshed token if it changed (new access token / expiry).
 			if refreshed.AccessToken != tok.AccessToken {
-				_ = SaveToken(tokenPath, refreshed)
+				if saveErr := SaveToken(tokenPath, refreshed); saveErr != nil {
+					slog.Warn("failed to persist refreshed OAuth token",
+						"path", tokenPath, "err", saveErr)
+				}
 			}
 			return refreshed, nil
 		}
 		fmt.Fprintf(os.Stderr, "Cached token is no longer valid (%v), re-authenticating...\n", refreshErr)
-		_ = os.Remove(tokenPath)
+		if rmErr := os.Remove(tokenPath); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			slog.Warn("failed to remove stale OAuth token",
+				"path", tokenPath, "err", rmErr)
+		}
 	}
 
-	tok, err = GetTokenFromWeb(config)
+	tok, err = GetTokenFromWeb(ctx, config)
 	if err != nil {
 		return nil, err
 	}
@@ -333,17 +348,16 @@ func getValidatedToken(ctx context.Context, cfg *Config, config *oauth2.Config) 
 // GetAuthenticatedService returns an authenticated Drive service.
 // In MCP mode (context has OAuth config + token), uses context credentials.
 // In CLI mode, uses file-based credentials.
-func GetAuthenticatedService(cfg *Config) (*drive.Service, error) {
-	return GetAuthenticatedServiceWithContext(context.Background(), cfg)
-}
+func GetAuthenticatedService(ctx context.Context, cfg *Config) (srv *drive.Service, err error) {
+	ctx, span := telemetry.StartSpan(ctx, "auth.drive_service",
+		attribute.String("auth.mode", authMode(ctx)),
+	)
+	defer func() { telemetry.EndSpan(span, err) }()
 
-// GetAuthenticatedServiceWithContext returns an authenticated Drive service using context.
-func GetAuthenticatedServiceWithContext(ctx context.Context, cfg *Config) (*drive.Service, error) {
-	// MCP mode: check context for injected credentials
 	if client := GetClientFromContext(ctx); client != nil {
-		srv, err := drive.NewService(ctx, option.WithHTTPClient(client))
+		srv, err = drive.NewService(ctx, option.WithHTTPClient(client))
 		if err != nil {
-			return nil, fmt.Errorf("unable to create Drive client: %v", err)
+			return nil, fmt.Errorf("unable to create Drive client: %w", err)
 		}
 		return srv, nil
 	}
@@ -358,25 +372,24 @@ func GetAuthenticatedServiceWithContext(ctx context.Context, cfg *Config) (*driv
 		return nil, err
 	}
 
-	srv, err := drive.NewService(ctx, option.WithHTTPClient(config.Client(ctx, tok)))
+	srv, err = drive.NewService(ctx, option.WithHTTPClient(config.Client(ctx, tok)))
 	if err != nil {
-		return nil, fmt.Errorf("unable to create Drive client: %v", err)
+		return nil, fmt.Errorf("unable to create Drive client: %w", err)
 	}
 	return srv, nil
 }
 
 // GetAuthenticatedActivityService returns an authenticated Drive Activity service.
-func GetAuthenticatedActivityService(cfg *Config) (*driveactivity.Service, error) {
-	return GetAuthenticatedActivityServiceWithContext(context.Background(), cfg)
-}
+func GetAuthenticatedActivityService(ctx context.Context, cfg *Config) (srv *driveactivity.Service, err error) {
+	ctx, span := telemetry.StartSpan(ctx, "auth.activity_service",
+		attribute.String("auth.mode", authMode(ctx)),
+	)
+	defer func() { telemetry.EndSpan(span, err) }()
 
-// GetAuthenticatedActivityServiceWithContext returns an authenticated Drive Activity service using context.
-func GetAuthenticatedActivityServiceWithContext(ctx context.Context, cfg *Config) (*driveactivity.Service, error) {
-	// MCP mode: check context for injected credentials
 	if client := GetClientFromContext(ctx); client != nil {
-		srv, err := driveactivity.NewService(ctx, option.WithHTTPClient(client))
+		srv, err = driveactivity.NewService(ctx, option.WithHTTPClient(client))
 		if err != nil {
-			return nil, fmt.Errorf("unable to create Drive Activity client: %v", err)
+			return nil, fmt.Errorf("unable to create Drive Activity client: %w", err)
 		}
 		return srv, nil
 	}
@@ -391,9 +404,18 @@ func GetAuthenticatedActivityServiceWithContext(ctx context.Context, cfg *Config
 		return nil, err
 	}
 
-	srv, err := driveactivity.NewService(ctx, option.WithHTTPClient(config.Client(ctx, tok)))
+	srv, err = driveactivity.NewService(ctx, option.WithHTTPClient(config.Client(ctx, tok)))
 	if err != nil {
-		return nil, fmt.Errorf("unable to create Drive Activity client: %v", err)
+		return nil, fmt.Errorf("unable to create Drive Activity client: %w", err)
 	}
 	return srv, nil
+}
+
+// authMode returns "mcp" if the context carries injected OAuth credentials,
+// "cli" otherwise. Used as a low-cardinality span attribute (no secrets).
+func authMode(ctx context.Context) string {
+	if GetClientFromContext(ctx) != nil {
+		return "mcp"
+	}
+	return "cli"
 }

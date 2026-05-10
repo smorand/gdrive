@@ -4,6 +4,20 @@
 
 A high-performance command-line tool and MCP server for Google Drive operations, built in Go. Provides comprehensive file and folder management with parallel downloads, progress tracking, smart path resolution, and flexible configuration management. Includes an MCP HTTP Streamable server that exposes all Drive operations as 21 tools for AI agents.
 
+## Maintenance Rule (CRITICAL)
+
+The `gdrive skill` command (source: `internal/cli/skill.md`, embedded via `//go:embed`) is the **single source of truth** for AI agents that consume this CLI. There is no external skill directory; agents call `gdrive skill` to load the guide.
+
+**Whenever you change a command, flag, default value, or any user-observable behavior, you MUST update `internal/cli/skill.md` in the same commit.** The skill is shipped inside the binary, so a stale skill file ships with the new behavior and silently misleads agents.
+
+Touch points that require a skill update:
+- New / removed / renamed subcommand or flag
+- Changed default value of a flag
+- Changed credential resolution, env vars, or config paths
+- Changed MIME-detection behavior, upload semantics, download semantics
+- Changed MCP endpoints, tools, or auth flow
+- New or removed activity command behavior
+
 ## Project Structure
 
 This project follows the **Standard Go Project Layout**:
@@ -13,7 +27,8 @@ gdrive/
 ├── cmd/gdrive/main.go        # Minimal entry point
 ├── internal/
 │   ├── auth/                  # OAuth2 authentication (CLI + MCP context injection)
-│   ├── cli/                   # CLI commands (file, folder, search, activity, mcp)
+│   ├── cli/                   # CLI commands (file, folder, search, activity, mcp, skill)
+│   │   └── skill.md           # Embedded AI-agent guide (output of `gdrive skill`)
 │   ├── drive/                 # Drive API operations (service.go, activity.go)
 │   └── mcp/                   # MCP server (server.go, oauth2.go, tools.go)
 ├── init/                      # Terraform: state backend, service accounts, APIs
@@ -74,30 +89,36 @@ gdrive/
 5. **cmd/gdrive/main.go** - Minimal entry point
    - Creates root Cobra command
    - Calls `cli.SetupRootCommand()` for global configuration
-   - Adds subcommands via constructor functions (file, folder, search, activity, mcp)
+   - Adds subcommands via constructor functions (file, folder, search, activity, mcp, skill)
    - Handles execution and error output
 
-6. **internal/mcp/server.go** - MCP HTTP Streamable server
+6. **internal/cli/skill.go + skill.md** - AI agent self-documentation
+   - `skill.md` is the canonical guide; embedded into the binary via `//go:embed`
+   - `gdrive skill` prints it to stdout
+   - Replaces any external skill directory; the binary is the source of truth
+   - **MUST be kept in sync with code changes — see Maintenance Rule above**
+
+7. **internal/mcp/server.go** - MCP HTTP Streamable server
    - HTTP mux with health, OAuth2, and MCP endpoints
    - Auth middleware enforces Bearer token with WWW-Authenticate headers
    - `httpContextFunc` injects auth context from HTTP request into MCP context
    - Graceful shutdown on SIGINT/SIGTERM
    - Structured logging via `slog` (JSON in prd, text otherwise)
 
-7. **internal/mcp/oauth2.go** - OAuth2 authorization server
+8. **internal/mcp/oauth2.go** - OAuth2 authorization server
    - RFC 8414/9728/7591 compliant with PKCE S256
    - Proxies to Google OAuth for user authentication
    - Dynamic client registration, in-memory state stores
    - Credential loading: Secret Manager → Vault → local file fallback
    - See `.agent_docs/authentication.md` for full flow
 
-8. **internal/mcp/tools.go** - 21 MCP tools for Google Drive
+9. **internal/mcp/tools.go** - 21 MCP tools for Google Drive
    - 12 read tools + 8 write tools + ping
    - All tools use ID-only parameters (no path resolution)
    - Signed URLs for file transfers, direct content access for read/download
    - See `.agent_docs/mcp-server.md` for full tool reference
 
-9. **Infrastructure** (init/, iac/, config.yaml, Dockerfile, docker-compose.prod.yml)
+10. **Infrastructure** (init/, iac/, config.yaml, Dockerfile, docker-compose.prod.yml)
    - Cloud Run: Three-phase Terraform deployment
    - VPS: docker-compose with Vault credential loading
    - Custom domain: `drive.mcp.scm-platform.org`
@@ -430,7 +451,8 @@ func FileCmd() *cobra.Command {
 
 3. Add method to `drive.Service` if needed (in `internal/drive/service.go`)
 4. Update README.md and CLAUDE.md
-5. Rebuild with `make build`
+5. **Update `internal/cli/skill.md`** — add the new command, flags, defaults, and any process workflow that uses it. This is mandatory (see Maintenance Rule).
+6. Rebuild with `make build`
 
 **Note:** Do NOT use `init()` functions. Use explicit constructor functions instead.
 
@@ -579,6 +601,7 @@ golangci-lint run  # if installed
 | MCP OAuth2 server | ✅ | RFC 8414/9728/7591 + PKCE S256 |
 | Cloud Run deployment | ✅ | Terraform-managed infrastructure |
 | Custom domain | ✅ | drive.mcp.scm-platform.org |
+| `skill` command | ✅ | Print embedded AI-agent guide to stdout |
 
 ## Detailed Documentation (.agent_docs/)
 

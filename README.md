@@ -361,6 +361,14 @@ You can also use explicit MIME types like `image/jpeg` or `application/pdf`.
   - `--max, -m` - Maximum results (default: 50)
   - `--type, -t` - File type filter (comma-separated)
 
+### Skill Command (AI agent guide)
+
+- `gdrive skill` - Print the embedded AI-agent guide (markdown with YAML frontmatter) to stdout
+
+This is the canonical reference for AI agents (e.g., Claude Code) consuming the binary. It replaces any external skill folder; the guide is shipped inside the binary, so it always matches the installed version. To wire it into Claude Code, add a one-liner to your global `CLAUDE.md`:
+
+> For Google Drive operations, load context with `gdrive skill`.
+
 ## Architecture
 
 This project follows the Standard Go Project Layout:

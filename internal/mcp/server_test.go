@@ -157,7 +157,7 @@ func TestNewServer(t *testing.T) {
 		CredentialFile: credFile,
 	}
 
-	srv, err := NewServer(cfg)
+	srv, err := NewServer(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestNewServerMissingCredentials(t *testing.T) {
 		BaseURL: "http://localhost:8080",
 	}
 
-	_, err := NewServer(cfg)
+	_, err := NewServer(t.Context(), cfg)
 	if err == nil {
 		t.Error("expected error for missing credentials")
 	}

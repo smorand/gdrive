@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -138,11 +139,11 @@ func ActivityCmd() *cobra.Command {
 	return cmd
 }
 
-// getDriveService returns an authenticated drive service.
-func getDriveService() (*drive.Service, error) {
-	srv, err := auth.GetAuthenticatedService(globalConfig)
+// getDriveService returns an authenticated drive service bound to ctx.
+func getDriveService(ctx context.Context) (*drive.Service, error) {
+	srv, err := auth.GetAuthenticatedService(ctx, globalConfig)
 	if err != nil {
-		return nil, fmt.Errorf("authentication error: %v", err)
+		return nil, fmt.Errorf("authentication error: %w", err)
 	}
 	return drive.NewService(srv), nil
 }
@@ -624,7 +625,7 @@ Examples:
 // Run functions for file commands
 
 func runFileDownload(cmd *cobra.Command, args []string) error {
-	ds, err := getDriveService()
+	ds, err := getDriveService(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -702,7 +703,7 @@ func runFileDownload(cmd *cobra.Command, args []string) error {
 }
 
 func runFileUpload(cmd *cobra.Command, args []string) error {
-	ds, err := getDriveService()
+	ds, err := getDriveService(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -757,7 +758,7 @@ func runFileUpload(cmd *cobra.Command, args []string) error {
 }
 
 func runFileDelete(cmd *cobra.Command, args []string) error {
-	ds, err := getDriveService()
+	ds, err := getDriveService(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -807,7 +808,7 @@ func runFileDelete(cmd *cobra.Command, args []string) error {
 }
 
 func runFileRename(cmd *cobra.Command, args []string) error {
-	ds, err := getDriveService()
+	ds, err := getDriveService(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -855,7 +856,7 @@ func runFileRename(cmd *cobra.Command, args []string) error {
 }
 
 func runFileMove(cmd *cobra.Command, args []string) error {
-	ds, err := getDriveService()
+	ds, err := getDriveService(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -911,7 +912,7 @@ func runFileMove(cmd *cobra.Command, args []string) error {
 }
 
 func runFileCopy(cmd *cobra.Command, args []string) error {
-	ds, err := getDriveService()
+	ds, err := getDriveService(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -978,7 +979,7 @@ func runFileCopy(cmd *cobra.Command, args []string) error {
 }
 
 func runFileInfo(cmd *cobra.Command, args []string) error {
-	ds, err := getDriveService()
+	ds, err := getDriveService(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -1055,7 +1056,7 @@ func runFileInfo(cmd *cobra.Command, args []string) error {
 }
 
 func runFileShare(cmd *cobra.Command, args []string) error {
-	ds, err := getDriveService()
+	ds, err := getDriveService(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -1102,7 +1103,7 @@ func runFileShare(cmd *cobra.Command, args []string) error {
 }
 
 func runFileSharePublic(cmd *cobra.Command, args []string) error {
-	ds, err := getDriveService()
+	ds, err := getDriveService(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -1143,7 +1144,7 @@ func runFileSharePublic(cmd *cobra.Command, args []string) error {
 }
 
 func runFilePermissions(cmd *cobra.Command, args []string) error {
-	ds, err := getDriveService()
+	ds, err := getDriveService(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -1240,7 +1241,7 @@ func runFilePermissions(cmd *cobra.Command, args []string) error {
 }
 
 func runFileRemovePermission(cmd *cobra.Command, args []string) error {
-	ds, err := getDriveService()
+	ds, err := getDriveService(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -1282,7 +1283,7 @@ func runFileRemovePermission(cmd *cobra.Command, args []string) error {
 }
 
 func runFileRemovePublic(cmd *cobra.Command, args []string) error {
-	ds, err := getDriveService()
+	ds, err := getDriveService(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -1325,7 +1326,7 @@ func runFileRemovePublic(cmd *cobra.Command, args []string) error {
 // Run functions for folder commands
 
 func runFolderCreate(cmd *cobra.Command, args []string) error {
-	ds, err := getDriveService()
+	ds, err := getDriveService(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -1340,7 +1341,7 @@ func runFolderCreate(cmd *cobra.Command, args []string) error {
 }
 
 func runFolderUpload(cmd *cobra.Command, args []string) error {
-	ds, err := getDriveService()
+	ds, err := getDriveService(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -1467,7 +1468,7 @@ func uploadFolderRecursive(ds *drive.Service, localPath, parentID, remotePath st
 }
 
 func runFolderDownload(cmd *cobra.Command, args []string) error {
-	ds, err := getDriveService()
+	ds, err := getDriveService(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -1612,7 +1613,7 @@ func downloadFolderRecursive(ds *drive.Service, folderID, localPath string, over
 }
 
 func runFolderList(cmd *cobra.Command, args []string) error {
-	ds, err := getDriveService()
+	ds, err := getDriveService(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -1669,7 +1670,7 @@ func runFolderList(cmd *cobra.Command, args []string) error {
 // Run functions for search and activity commands
 
 func runSearch(cmd *cobra.Command, args []string) error {
-	ds, err := getDriveService()
+	ds, err := getDriveService(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -1717,7 +1718,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 }
 
 func runActivityChanges(cmd *cobra.Command, args []string) error {
-	ds, err := getDriveService()
+	ds, err := getDriveService(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -1775,7 +1776,7 @@ func runActivityChanges(cmd *cobra.Command, args []string) error {
 }
 
 func runActivityRevisions(cmd *cobra.Command, args []string) error {
-	ds, err := getDriveService()
+	ds, err := getDriveService(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -1868,7 +1869,7 @@ func runActivityRevisions(cmd *cobra.Command, args []string) error {
 }
 
 func runActivityDeleted(cmd *cobra.Command, args []string) error {
-	ds, err := getDriveService()
+	ds, err := getDriveService(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -1931,7 +1932,7 @@ func runActivityDeleted(cmd *cobra.Command, args []string) error {
 
 func runActivityHistory(cmd *cobra.Command, args []string) error {
 	// Get Activity service
-	activityService, err := auth.GetAuthenticatedActivityService(globalConfig)
+	activityService, err := auth.GetAuthenticatedActivityService(cmd.Context(), globalConfig)
 	if err != nil {
 		return err
 	}

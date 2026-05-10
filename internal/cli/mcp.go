@@ -90,7 +90,7 @@ func MCPCmd() *cobra.Command {
 				CredentialFile:  credentialFile,
 			}
 
-			srv, err := mcp.NewServer(cfg)
+			srv, err := mcp.NewServer(cmd.Context(), cfg)
 			if err != nil {
 				return fmt.Errorf("create MCP server: %w", err)
 			}

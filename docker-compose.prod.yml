@@ -1,8 +1,17 @@
 services:
   gdrive:
-    build: .
+    build:
+      context: .
+      args:
+        GO_BIN: gdrive
+        HAS_INTERNAL: "yes"
+        HAS_DATA: "no"
     container_name: gdrive
     restart: unless-stopped
+    # The Dockerfile ENTRYPOINT is the bare binary; the subcommand and any
+    # MCP-server flags are supplied here so the same image can also be used
+    # for ad-hoc CLI invocations (override `command:` at run time).
+    command: ["mcp"]
     expose:
       - "8080"
     volumes:

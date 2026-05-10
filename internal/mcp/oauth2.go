@@ -261,7 +261,7 @@ func (s *OAuth2Server) HandleCallback(w http.ResponseWriter, r *http.Request) {
 
 	// Exchange code with Google
 	s.oauthConfig.RedirectURL = s.baseURL + "/oauth/callback"
-	googleToken, err := s.oauthConfig.Exchange(context.Background(), code)
+	googleToken, err := s.oauthConfig.Exchange(r.Context(), code)
 	if err != nil {
 		slog.Error("failed to exchange code with Google", "error", err)
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", "Failed to exchange authorization code")
@@ -412,7 +412,7 @@ func (s *OAuth2Server) handleRefreshTokenGrant(w http.ResponseWriter, r *http.Re
 
 	// Use the refresh token to get a new access token from Google
 	token := &oauth2.Token{RefreshToken: refreshToken}
-	tokenSource := s.oauthConfig.TokenSource(context.Background(), token)
+	tokenSource := s.oauthConfig.TokenSource(r.Context(), token)
 	newToken, err := tokenSource.Token()
 	if err != nil {
 		slog.Error("failed to refresh token", "error", err)
@@ -474,10 +474,11 @@ func (s *OAuth2Server) registerClientWithID(clientID string, redirectURIs []stri
 }
 
 // LoadOAuthCredentials loads Google OAuth credentials from Secret Manager, Vault, or local file.
-func LoadOAuthCredentials(secretName, secretProject, vaultAddr, vaultToken, vaultSecretPath, credentialFile string) (*OAuthCredentials, error) {
+// The provided context bounds external network calls (Secret Manager, Vault).
+func LoadOAuthCredentials(ctx context.Context, secretName, secretProject, vaultAddr, vaultToken, vaultSecretPath, credentialFile string) (*OAuthCredentials, error) {
 	// Tier 1: Try GCP Secret Manager
 	if secretName != "" && secretProject != "" {
-		creds, err := loadFromSecretManager(secretName, secretProject)
+		creds, err := loadFromSecretManager(ctx, secretName, secretProject)
 		if err != nil {
 			slog.Warn("failed to load credentials from Secret Manager",
 				"error", err, "secret_name", secretName)
@@ -489,7 +490,7 @@ func LoadOAuthCredentials(secretName, secretProject, vaultAddr, vaultToken, vaul
 
 	// Tier 2: Try HashiCorp Vault
 	if vaultAddr != "" && vaultSecretPath != "" {
-		creds, err := loadFromVault(vaultAddr, vaultToken, vaultSecretPath)
+		creds, err := loadFromVault(ctx, vaultAddr, vaultToken, vaultSecretPath)
 		if err != nil {
 			slog.Warn("failed to load credentials from Vault",
 				"error", err, "vault_addr", vaultAddr, "vault_secret_path", vaultSecretPath)
@@ -516,14 +517,14 @@ func LoadOAuthCredentials(secretName, secretProject, vaultAddr, vaultToken, vaul
 
 // loadFromVault loads credentials from HashiCorp Vault KV v2.
 // The secret must contain a "credentials" field with the JSON content.
-func loadFromVault(addr, token, secretPath string) (*OAuthCredentials, error) {
+func loadFromVault(ctx context.Context, addr, token, secretPath string) (*OAuthCredentials, error) {
 	// Build the KV v2 API URL
 	// secretPath is like "secret/credentials/google-credentials"
 	// Vault KV v2 API: GET /v1/secret/data/credentials/google-credentials
 	apiPath := strings.Replace(secretPath, "secret/", "secret/data/", 1)
 	url := fmt.Sprintf("%s/v1/%s", strings.TrimRight(addr, "/"), apiPath)
 
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create Vault request: %w", err)
 	}
@@ -557,8 +558,7 @@ func loadFromVault(addr, token, secretPath string) (*OAuthCredentials, error) {
 	return parseCredentials([]byte(credentials))
 }
 
-func loadFromSecretManager(secretName, projectID string) (*OAuthCredentials, error) {
-	ctx := context.Background()
+func loadFromSecretManager(ctx context.Context, secretName, projectID string) (*OAuthCredentials, error) {
 	client, err := secretmanager.NewClient(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("create secret manager client: %w", err)
