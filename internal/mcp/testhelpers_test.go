@@ -61,7 +61,7 @@ func setupToolTest(t *testing.T) *Server {
 		CredentialFile: credFile,
 	}
 
-	srv, err := NewServer(cfg)
+	srv, err := NewServer(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("failed to create test server: %v", err)
 	}

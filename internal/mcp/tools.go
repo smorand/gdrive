@@ -57,7 +57,7 @@ func getDriveService(ctx context.Context) (*drive.Service, error) {
 		return driveServiceOverride(ctx)
 	}
 	cfg := auth.NewConfig("", "")
-	srv, err := auth.GetAuthenticatedServiceWithContext(ctx, cfg)
+	srv, err := auth.GetAuthenticatedService(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("authentication failed: %w", err)
 	}
@@ -70,7 +70,7 @@ func getActivityService(ctx context.Context) (*driveactivity.Service, error) {
 		return activityServiceOverride(ctx)
 	}
 	cfg := auth.NewConfig("", "")
-	srv, err := auth.GetAuthenticatedActivityServiceWithContext(ctx, cfg)
+	srv, err := auth.GetAuthenticatedActivityService(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("authentication failed: %w", err)
 	}

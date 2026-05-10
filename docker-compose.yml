@@ -1,0 +1,18 @@
+# Development docker-compose. Production uses docker-compose.prod.yml on the VPS.
+# `make run-up` builds via `make docker-build` and starts this compose file.
+services:
+  gdrive:
+    image: ${DOCKER_PREFIX:-}${PROJECT_NAME:-gdrive}-gdrive:${DOCKER_TAG:-latest}
+    container_name: gdrive-dev
+    restart: "no"
+    # The Dockerfile ENTRYPOINT is the bare binary; subcommand goes here.
+    command: ["mcp", "--port", "8080", "--credential-file", "/data/credentials.json"]
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount your local OAuth credentials directory at runtime.
+      - ${GDRIVE_CREDENTIALS_DIR:-./.dev-credentials}:/data:ro
+    environment:
+      PORT: "8080"
+      BASE_URL: "http://localhost:8080"
+      GDRIVE_TRACE_FILE: ""

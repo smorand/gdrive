@@ -12,9 +12,11 @@ import (
 	"time"
 
 	"gdrive/internal/auth"
+	"gdrive/internal/telemetry"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // ServerConfig holds the MCP server configuration.
@@ -39,11 +41,11 @@ type Server struct {
 }
 
 // NewServer creates and configures the MCP server.
-func NewServer(cfg *ServerConfig) (*Server, error) {
+func NewServer(ctx context.Context, cfg *ServerConfig) (*Server, error) {
 	setupLogging()
 
 	// Load OAuth credentials
-	creds, err := LoadOAuthCredentials(cfg.SecretName, cfg.SecretProject, cfg.VaultAddr, cfg.VaultToken, cfg.VaultSecretPath, cfg.CredentialFile)
+	creds, err := LoadOAuthCredentials(ctx, cfg.SecretName, cfg.SecretProject, cfg.VaultAddr, cfg.VaultToken, cfg.VaultSecretPath, cfg.CredentialFile)
 	if err != nil {
 		return nil, fmt.Errorf("load OAuth credentials: %w", err)
 	}
@@ -106,8 +108,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /oauth/callback", s.oauth2.HandleCallback)
 	mux.HandleFunc("POST /oauth/token", s.oauth2.HandleToken)
 
-	// MCP endpoint (auth enforced in httpContextFunc via WithHTTPContextFunc)
-	mux.Handle("/mcp", s.authMiddleware(streamableServer))
+	// MCP endpoint: tracing wraps auth wraps the streamable server.
+	mux.Handle("/mcp", tracingMiddleware(s.authMiddleware(streamableServer)))
 
 	s.httpServer = &http.Server{
 		Addr:    addr,
@@ -139,8 +141,9 @@ func (s *Server) Start() error {
 
 // httpContextFunc injects auth context from the HTTP request into the MCP context.
 // This is called by the mcp-go SDK for each request to the /mcp endpoint.
+// Tracing is handled by tracingMiddleware around the HTTP handler, so the
+// request-scoped span is already started by the time this runs.
 func (s *Server) httpContextFunc(ctx context.Context, r *http.Request) context.Context {
-	// Extract bearer token from Authorization header
 	authHeader := r.Header.Get("Authorization")
 	if !strings.HasPrefix(authHeader, "Bearer ") {
 		return ctx
@@ -160,6 +163,20 @@ func (s *Server) httpContextFunc(ctx context.Context, r *http.Request) context.C
 	ctx = auth.WithAccessToken(ctx, token)
 
 	return ctx
+}
+
+// tracingMiddleware wraps an HTTP handler in a tracing span. The span name
+// is "mcp.request"; attributes capture method and path (not query/body, no
+// secrets). The span is ended when the wrapped handler returns.
+func tracingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, span := telemetry.StartSpan(r.Context(), "mcp.request",
+			attribute.String("http.method", r.Method),
+			attribute.String("http.path", r.URL.Path),
+		)
+		defer telemetry.EndSpan(span, nil)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 // authMiddleware wraps an HTTP handler to enforce Bearer token authentication.

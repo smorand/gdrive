@@ -1,60 +1,61 @@
-# Multi-stage Dockerfile for gdrive MCP server
-# Stage 1: Build the Go binary
+ARG GO_BIN
+ARG HAS_INTERNAL=no
+ARG HAS_DATA=no
 
-FROM golang:1.25 AS builder
+# --- Base image with user setup ---
+FROM golang:1.26-alpine3.23 AS prebuild
 
-WORKDIR /app
+ENV USER=appuser
+ENV UID=10001
 
-# Copy go mod files first for better layer caching
-COPY go.mod go.sum ./
+RUN apk update && apk add --no-cache git ca-certificates \
+    && adduser \
+    --disabled-password \
+    --gecos "" \
+    --home "/nonexistent" \
+    --shell "/sbin/nologin" \
+    --no-create-home \
+    --uid "${UID}" \
+    "${USER}"
 
-# Download dependencies
+# --- Conditional internal/ directory ---
+FROM prebuild AS build_yes
+ONBUILD COPY internal/ /build/internal
+
+FROM prebuild AS build_no
+ONBUILD RUN mkdir -p /build/internal
+
+# --- Build stage ---
+FROM build_${HAS_INTERNAL} AS build
+ARG GO_BIN
+COPY go.mod go.sum /build/
+COPY cmd/ /build/cmd/
+WORKDIR /build
 RUN go mod download
+RUN go mod verify
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /go/bin/app ./cmd/${GO_BIN}
 
-# Copy source code
-COPY . .
+# --- Conditional data/ directory ---
+FROM build AS data_yes
+ONBUILD COPY data/ /data
 
-# Build the binary
-# - CGO_ENABLED=0 for static binary
-# - -ldflags="-s -w" strips debug info for smaller binary
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-    -ldflags="-s -w" \
-    -o /gdrive \
-    ./cmd/gdrive
+FROM build AS data_no
+ONBUILD RUN mkdir -p /data
 
-# Stage 2: Final minimal image
+FROM data_${HAS_DATA} AS runner
 
-FROM alpine:latest
+# --- Final minimal image ---
+FROM scratch
 
-# Install ca-certificates for HTTPS requests to Google APIs
-RUN apk --no-cache add ca-certificates tzdata
+COPY --from=runner /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=runner /etc/passwd /etc/group /etc/
+COPY --from=runner /go/bin/app /go/bin/app
+COPY --from=runner /data /data
 
-# Create non-root user for security
-RUN adduser -D -g '' appuser
+USER appuser:appuser
 
-WORKDIR /app
-
-# Copy binary from builder
-COPY --from=builder /gdrive /app/gdrive
-
-# Change ownership to appuser
-RUN chown -R appuser:appuser /app
-
-# Switch to non-root user
-USER appuser
-
-# Expose the default MCP server port
 EXPOSE 8080
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
-
-# Default command: start MCP server
-# Environment variables:
-# - PORT (optional, defaults to 8080)
-# - BASE_URL (required for OAuth redirect URLs)
-# Cloud Run: SECRET_NAME, SECRET_PROJECT (GCP Secret Manager)
-# VPS: VAULT_ADDR, VAULT_TOKEN, VAULT_SECRET_PATH (HashiCorp Vault)
-# Fallback: CREDENTIAL_FILE (local file path)
-ENTRYPOINT ["/app/gdrive", "mcp"]
+# The image carries the binary; the subcommand (e.g. "mcp") is supplied at
+# `docker run` / Cloud Run / docker-compose level, not baked in here.
+ENTRYPOINT ["/go/bin/app"]
