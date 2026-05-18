@@ -63,7 +63,7 @@ gdrive search "report"
 
 ```bash
 # Search
-gdrive search QUERY [--type TYPE[,TYPE]] [--max N]
+gdrive search QUERY [--type TYPE[,TYPE]] [--max N] [--parent FOLDER [--id]]
 
 # File operations
 gdrive file download FILE [LOCAL_FOLDER] [--id] [--overwrite] [--format FMT]
@@ -302,9 +302,13 @@ gdrive search "Q4 Report"
 gdrive search "budget 2024" --max 20
 gdrive search Passeport --type image,pdf
 gdrive search "My Project" --type folder
+gdrive search report --parent Documents/Projects
+gdrive search report --parent 1a2b3c4d5e --id
 ```
 
 `--type` accepts comma-separated values mixing shortcuts and explicit MIME types.
+
+`--parent` restricts results to direct children of the given folder (path by default; pass `--id` to use a folder ID).
 
 **Type shortcuts:**
 
@@ -545,6 +549,7 @@ gdrive mcp --port 8080 --credential-file ~/.credentials/google_credentials.json
 - Use `--type` shortcuts to avoid drowning in noise: `--type pdf,doc`.
 - `--max` defaults to 50 for `search`; raise it explicitly when needed.
 - Partial titles work; Drive's search is fuzzy.
+- `--parent FOLDER` scopes the search to direct children of a folder (path by default, ID with `--id`). Use it to disambiguate common names.
 
 ### Upload / download
 - Trust auto MIME detection; only pass `--mime` to override.

@@ -37,7 +37,7 @@ Client (AI Agent)
 
 | Tool | Description | Key Inputs |
 |------|-------------|------------|
-| `drive_search` | Search files across Drive | `query`, `maxResults` |
+| `drive_search` | Search files across Drive | `query`, `fileTypes`, `parentId`, `maxResults` |
 | `drive_folder_list` | List folder contents | `folderId` |
 | `drive_file_info` | Get file metadata with path | `fileId` |
 | `drive_download_url` | Get signed download URL | `fileId` |

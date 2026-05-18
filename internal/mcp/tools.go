@@ -104,6 +104,7 @@ func registerSearchTool(s *Server) {
 		mcp.WithDescription("Search for files and folders in Google Drive by name. Use type shortcuts (image, audio, video, prez, doc, spreadsheet, txt, pdf, folder) or explicit MIME types to filter results."),
 		mcp.WithString("query", mcp.Required(), mcp.Description("Search query (file name)")),
 		mcp.WithString("fileTypes", mcp.Description("Comma-separated file type shortcuts or MIME types (e.g., 'image,pdf' or 'application/pdf')")),
+		mcp.WithString("parentId", mcp.Description("Restrict search to direct children of this folder ID")),
 		mcp.WithNumber("maxResults", mcp.Description("Maximum number of results (default: 50)")),
 	)
 
@@ -112,6 +113,7 @@ func registerSearchTool(s *Server) {
 
 		query, _ := req.GetArguments()["query"].(string)
 		fileTypesStr, _ := req.GetArguments()["fileTypes"].(string)
+		parentID, _ := req.GetArguments()["parentId"].(string)
 		maxResults := int64(50)
 		if mr, ok := req.GetArguments()["maxResults"].(float64); ok && mr > 0 {
 			maxResults = int64(mr)
@@ -130,7 +132,7 @@ func registerSearchTool(s *Server) {
 			}
 		}
 
-		files, err := driveSrv.SearchFiles(query, fileTypes, maxResults)
+		files, err := driveSrv.SearchFiles(query, fileTypes, parentID, maxResults)
 		if err != nil {
 			return logToolCall("drive_search", start, nil, fmt.Errorf("search failed: %w", err))
 		}

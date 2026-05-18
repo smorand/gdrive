@@ -114,13 +114,17 @@ Examples:
   gdrive search Passeport --type image,pdf
   gdrive search Passeport --type pdf,image/jpeg
   gdrive search "My Project" --type folder
-  gdrive search contract --type doc -m 10`,
+  gdrive search contract --type doc -m 10
+  gdrive search report --parent Documents/Projects
+  gdrive search report --parent 1a2b3c4d5e --id`,
 		Args: cobra.ExactArgs(1),
 		RunE: runSearch,
 	}
 
 	cmd.Flags().Int64VarP(&maxResults, "max", "m", 50, "Maximum number of results")
 	cmd.Flags().StringVarP(&fileTypeFlag, "type", "t", "", "Filter by file types (comma-separated)")
+	cmd.Flags().String("parent", "", "Restrict search to direct children of this folder (path or ID with --id)")
+	cmd.Flags().BoolVar(&useIDFlag, "id", false, "Treat --parent value as a Drive folder ID")
 
 	return cmd
 }
@@ -1697,13 +1701,36 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		for i, ft := range fileTypes {
 			fileTypes[i] = strings.TrimSpace(ft)
 		}
+	}
+
+	// Resolve parent if provided
+	parentFlag, _ := cmd.Flags().GetString("parent")
+	var parentID string
+	if parentFlag != "" {
+		if useIDFlag {
+			parentID = parentFlag
+		} else {
+			id, err := ds.ResolvePath(parentFlag, true)
+			if err != nil {
+				return fmt.Errorf("resolving --parent %q: %w", parentFlag, err)
+			}
+			parentID = id
+		}
+	}
+
+	switch {
+	case len(fileTypes) > 0 && parentFlag != "":
+		color.Cyan("Searching for: %s (types: %s, parent: %s)", query, strings.Join(fileTypes, ", "), parentFlag)
+	case len(fileTypes) > 0:
 		color.Cyan("Searching for: %s (types: %s)", query, strings.Join(fileTypes, ", "))
-	} else {
+	case parentFlag != "":
+		color.Cyan("Searching for: %s (parent: %s)", query, parentFlag)
+	default:
 		color.Cyan("Searching for: %s", query)
 	}
 
 	// Search for files
-	items, err := ds.SearchFiles(query, fileTypes, maxResults)
+	items, err := ds.SearchFiles(query, fileTypes, parentID, maxResults)
 	if err != nil {
 		return err
 	}

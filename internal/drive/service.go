@@ -475,8 +475,13 @@ func (ds *Service) ExpandFileTypes(fileTypes []string) []string {
 }
 
 // SearchFiles searches for files and folders on Google Drive.
-func (ds *Service) SearchFiles(query string, fileTypes []string, maxResults int64) ([]*drive.File, error) {
+// If parentID is non-empty, results are restricted to direct children of that folder.
+func (ds *Service) SearchFiles(query string, fileTypes []string, parentID string, maxResults int64) ([]*drive.File, error) {
 	searchQuery := fmt.Sprintf("name contains '%s' and trashed = false", query)
+
+	if parentID != "" {
+		searchQuery += fmt.Sprintf(" and '%s' in parents", parentID)
+	}
 
 	// Add MIME type filters if specified
 	if len(fileTypes) > 0 {
