@@ -660,4 +660,4 @@ golangci-lint run  # if installed
 
 ## Author
 
-Sebastien MORAND - sebastien.morand@*******
+Sebastien MORAND - seb.morand@gmail.com
