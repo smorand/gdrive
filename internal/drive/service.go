@@ -495,14 +495,39 @@ func (ds *Service) SearchFiles(query string, fileTypes []string, parentID string
 		}
 	}
 
-	fileList, err := ds.API.Files.List().Q(searchQuery).
-		Fields("files(id, name, mimeType, modifiedTime, size)").
-		PageSize(maxResults).Do()
-	if err != nil {
-		return nil, err
+	// Drive API caps PageSize at 1000. Paginate when maxResults > 1000 (or unbounded with <= 0).
+	const apiPageMax int64 = 1000
+	var (
+		results   []*drive.File
+		pageToken string
+	)
+	for {
+		remaining := maxResults - int64(len(results))
+		if maxResults > 0 && remaining <= 0 {
+			break
+		}
+		pageSize := apiPageMax
+		if maxResults > 0 && remaining < pageSize {
+			pageSize = remaining
+		}
+		call := ds.API.Files.List().Q(searchQuery).
+			Fields("nextPageToken, files(id, name, mimeType, modifiedTime, size)").
+			PageSize(pageSize)
+		if pageToken != "" {
+			call = call.PageToken(pageToken)
+		}
+		fileList, err := call.Do()
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, fileList.Files...)
+		if fileList.NextPageToken == "" {
+			break
+		}
+		pageToken = fileList.NextPageToken
 	}
 
-	return fileList.Files, nil
+	return results, nil
 }
 
 // DeleteFile deletes a file or folder from Google Drive.

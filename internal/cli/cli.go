@@ -3,6 +3,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -24,6 +25,7 @@ import (
 var (
 	overwriteFlag bool
 	useIDFlag     bool
+	jsonFlag      bool
 	maxResults    int64
 	fileTypeFlag  string
 	parallelFlag  int
@@ -121,10 +123,11 @@ Examples:
 		RunE: runSearch,
 	}
 
-	cmd.Flags().Int64VarP(&maxResults, "max", "m", 50, "Maximum number of results")
+	cmd.Flags().Int64VarP(&maxResults, "max", "m", 50, "Maximum number of results (use 0 for unlimited)")
 	cmd.Flags().StringVarP(&fileTypeFlag, "type", "t", "", "Filter by file types (comma-separated)")
 	cmd.Flags().String("parent", "", "Restrict search to direct children of this folder (path or ID with --id)")
 	cmd.Flags().BoolVar(&useIDFlag, "id", false, "Treat --parent value as a Drive folder ID")
+	cmd.Flags().BoolVar(&jsonFlag, "json", false, "Output results as JSON array (untruncated names)")
 
 	return cmd
 }
@@ -1718,21 +1721,47 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	switch {
-	case len(fileTypes) > 0 && parentFlag != "":
-		color.Cyan("Searching for: %s (types: %s, parent: %s)", query, strings.Join(fileTypes, ", "), parentFlag)
-	case len(fileTypes) > 0:
-		color.Cyan("Searching for: %s (types: %s)", query, strings.Join(fileTypes, ", "))
-	case parentFlag != "":
-		color.Cyan("Searching for: %s (parent: %s)", query, parentFlag)
-	default:
-		color.Cyan("Searching for: %s", query)
+	if !jsonFlag {
+		switch {
+		case len(fileTypes) > 0 && parentFlag != "":
+			color.Cyan("Searching for: %s (types: %s, parent: %s)", query, strings.Join(fileTypes, ", "), parentFlag)
+		case len(fileTypes) > 0:
+			color.Cyan("Searching for: %s (types: %s)", query, strings.Join(fileTypes, ", "))
+		case parentFlag != "":
+			color.Cyan("Searching for: %s (parent: %s)", query, parentFlag)
+		default:
+			color.Cyan("Searching for: %s", query)
+		}
 	}
 
 	// Search for files
 	items, err := ds.SearchFiles(query, fileTypes, parentID, maxResults)
 	if err != nil {
 		return err
+	}
+
+	if jsonFlag {
+		// Emit a stable, machine-readable JSON array (untruncated names).
+		type jsonItem struct {
+			ID           string `json:"id"`
+			Name         string `json:"name"`
+			MimeType     string `json:"mimeType"`
+			ModifiedTime string `json:"modifiedTime,omitempty"`
+			Size         int64  `json:"size,omitempty"`
+		}
+		out := make([]jsonItem, 0, len(items))
+		for _, it := range items {
+			out = append(out, jsonItem{
+				ID:           it.Id,
+				Name:         it.Name,
+				MimeType:     it.MimeType,
+				ModifiedTime: it.ModifiedTime,
+				Size:         it.Size,
+			})
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(out)
 	}
 
 	if len(items) == 0 {
